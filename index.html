@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>synthesis</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="mode-simplify">
+
+<canvas id="particle-canvas"></canvas>
+
+<div id="canvas-container">
+  <div id="canvas">
+    <svg id="conn-svg" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:visible;pointer-events:none;">
+      <defs>
+        <marker id="arrow-echoes"   markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(139,115,85,0.6)"/></marker>
+        <marker id="arrow-leads-to" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(80,120,100,0.7)"/></marker>
+        <marker id="arrow-counter"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(160,80,80,0.7)"/></marker>
+      </defs>
+    </svg>
+  </div>
+</div>
+
+<div id="hint">double-click to add a fragment</div>
+
+<div id="filter-bar" aria-label="Graph filters">
+  <label>
+    type
+    <select id="type-filter">
+      <option value="__all">All</option>
+    </select>
+  </label>
+  <label>
+    tag
+    <select id="tag-filter">
+      <option value="__all">All</option>
+    </select>
+  </label>
+</div>
+
+<!-- Input controls — bottom center -->
+<div id="input-controls">
+  <button id="voice-btn">speak</button>
+  <span class="ic-sep"> · </span>
+  <button id="dump-btn">text</button>
+</div>
+
+<div id="input-status" class="input-status"></div>
+
+<!-- Text dump panel -->
+<div id="text-dump-panel">
+  <div class="tdp-label">paste or write</div>
+  <textarea placeholder="dump your thoughts here..."></textarea>
+  <div class="tdp-footer">
+    <button id="dump-cancel">cancel</button>
+    <button id="dump-submit">extract →</button>
+  </div>
+</div>
+
+<div id="view-toggle">
+  <span class="vt-opt active" id="vt-simplify">simplify</span>
+  <span class="vt-sep"> · </span>
+  <span class="vt-opt" id="vt-visible">visible</span>
+</div>
+
+<div id="edit-panel"></div>
+<div id="type-picker"></div>
+<div id="context-menu"></div>
+
+<button id="synth-btn">synthesize →</button>
+
+<div id="synth-overlay">
+  <div id="synth-popup"></div>
+</div>
+
+<div id="synth-output"></div>
+
+<script src="data.js"></script>
+<script src="particles.js"></script>
+<script src="synthesis.js"></script>
+<script src="patterns.js"></script>
+<script src="app.js"></script>
+<script src="input.js"></script>
+</body>
+</html>

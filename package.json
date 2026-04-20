@@ -1,0 +1,11 @@
+{
+  "name": "synthesis-tool",
+  "version": "1.0.0",
+  "description": "synthesis tool — local server",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.0"
+  }
+}
