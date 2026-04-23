@@ -42,6 +42,76 @@ function nodeScreen(frag) {
 // ═══════════════════════════════════════════════════════════════
 // FILTER + HOVER VISUAL STATE
 // ═══════════════════════════════════════════════════════════════
+function relativeTime(iso) {
+  if (!iso) return '';
+  const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  if (m < 1)  return 'just now';
+  if (m < 60) return m + 'm ago';
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + 'h ago';
+  return Math.floor(h / 24) + 'd ago';
+}
+
+function focusSession(sessionId) {
+  const frags = fragments.filter(f => f.sessionId === sessionId);
+  if (!frags.length) return;
+  const cx = frags.reduce((s, f) => s + f.x, 0) / frags.length;
+  const cy = frags.reduce((s, f) => s + f.y, 0) / frags.length;
+  canvasState.x = window.innerWidth  / 2 - cx * canvasState.scale;
+  canvasState.y = window.innerHeight / 2 - cy * canvasState.scale;
+  applyTransform();
+  saveCanvas();
+}
+
+function renderTimeline() {
+  const container = document.getElementById('session-timeline');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const ordered = sessions.slice().reverse();
+  ordered.forEach((session, i) => {
+    const item = document.createElement('div');
+    item.className = 'tl-item' + (session.id === currentSessionId ? ' active' : '');
+    item.style.opacity = String(Math.max(0.25, 1 - i * 0.15));
+
+    const dot = document.createElement('div');
+    dot.className = 'tl-dot';
+
+    const meta = document.createElement('div');
+    meta.className = 'tl-meta';
+
+    const timeEl = document.createElement('span');
+    timeEl.className = 'tl-time';
+    timeEl.textContent = relativeTime(session.timestamp) || '—';
+
+    const detailEl = document.createElement('span');
+    detailEl.className = 'tl-detail';
+    const typeLabel = session.inputType === 'voice' ? 'v' : session.inputType === 'text' ? 't' : '·';
+    const n = session.fragmentIds ? session.fragmentIds.length : 0;
+    detailEl.textContent = typeLabel + '  ' + n + (n === 1 ? ' node' : ' nodes');
+
+    meta.appendChild(timeEl);
+    meta.appendChild(detailEl);
+    item.appendChild(dot);
+    item.appendChild(meta);
+
+    if (session.transcript) {
+      const txBtn = document.createElement('button');
+      txBtn.className = 'tl-tx-btn';
+      txBtn.textContent = 'tx';
+      txBtn.title = 'view transcript';
+      txBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof openTranscriptView === 'function') openTranscriptView(session.id);
+      });
+      item.appendChild(txBtn);
+    }
+
+    item.addEventListener('click', () => focusSession(session.id));
+    container.appendChild(item);
+  });
+}
+
 function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
@@ -67,13 +137,14 @@ function populateSelect(select, values, selectedValue) {
 
 function refreshFilterOptions() {
   const types = uniqueSorted([...NODE_TYPES, ...fragments.map(f => f.type)]);
-  const tags  = uniqueSorted(fragments.flatMap(f => Array.isArray(f.tags) ? f.tags : []));
+  const tags  = uniqueSorted(sessions.flatMap(s => Array.isArray(s.topTags) ? s.topTags : []));
 
   populateSelect(typeFilter, types, graphFilters.type);
   populateSelect(tagFilter, tags, graphFilters.tag);
   graphFilters.type = typeFilter?.value || '__all';
   graphFilters.tag  = tagFilter?.value  || '__all';
   applyGraphVisualState();
+  renderTimeline();
 }
 
 function fragmentMatchesFilters(frag) {
@@ -534,6 +605,23 @@ function showContextMenu(mx, my, frag) {
   del.className = 'ctx-item'; del.textContent = 'delete fragment';
   del.addEventListener('click', () => { deleteFragment(frag.id); hideContextMenu(); });
   ctxMenu.appendChild(del);
+
+  if (frag.sessionId) {
+    const sess = sessions.find(s => s.id === frag.sessionId);
+    if (sess && sess.transcript) {
+      const sep2 = document.createElement('hr');
+      sep2.className = 'ctx-sep';
+      ctxMenu.appendChild(sep2);
+      const txBtn = document.createElement('div');
+      txBtn.className = 'ctx-item';
+      txBtn.textContent = 'view session transcript';
+      txBtn.addEventListener('click', () => {
+        hideContextMenu();
+        if (typeof openTranscriptView === 'function') openTranscriptView(frag.sessionId);
+      });
+      ctxMenu.appendChild(txBtn);
+    }
+  }
 
   if (frag.connections.length > 0) {
     const sep = document.createElement('hr');

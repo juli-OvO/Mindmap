@@ -76,6 +76,39 @@
 
 <div id="synth-output"></div>
 
+<!-- Transcript viewer overlay -->
+<div id="transcript-overlay">
+  <div id="transcript-popup">
+    <div id="transcript-meta"></div>
+    <div id="transcript-body"></div>
+    <div id="transcript-footer">
+      <button id="transcript-close">close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Patch review overlay -->
+<div id="patch-overlay">
+  <div id="patch-popup">
+    <div id="patch-body">
+      <div id="patch-left">
+        <div class="pp-label">transcript</div>
+        <div id="patch-transcript-text"></div>
+      </div>
+      <div id="patch-right">
+        <div class="pp-label">proposed changes</div>
+        <div id="patch-sections"></div>
+      </div>
+    </div>
+    <div id="patch-footer">
+      <button id="patch-cancel">cancel</button>
+      <button id="patch-accept">accept all →</button>
+    </div>
+  </div>
+</div>
+
+<div id="session-timeline"></div>
+
 <script src="data.js"></script>
 <script src="particles.js"></script>
 <script src="synthesis.js"></script>

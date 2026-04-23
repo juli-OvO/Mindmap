@@ -37,8 +37,9 @@ function spawnParticle() {
 }
 
 function initParticles() {
+  const count = (typeof nodeTextMode !== 'undefined' && nodeTextMode === 'visible') ? 360 : 220;
   particles = [];
-  for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(spawnParticle());
+  for (let i = 0; i < count; i++) particles.push(spawnParticle());
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -162,7 +163,7 @@ function resizeParticleCanvas() {
 // ═══════════════════════════════════════════════════════════════
 function loop() {
   animTime++;
-  pCtx.fillStyle = 'rgba(245, 240, 232, 0.10)';
+  pCtx.fillStyle = 'rgba(245, 240, 232, 0.08)';
   pCtx.fillRect(0, 0, pCanvas.width, pCanvas.height);
 
   for (const p of particles) { updateParticle(p); drawParticle(p); }
@@ -229,26 +230,31 @@ function drawConnections() {
       const color    = colors[conn.type] || 'rgba(139,115,85,0.5)';
       const markerId = 'arrow-' + conn.type;
 
-      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('class', 'conn-line');
-      line.setAttribute('x1', x1);
-      line.setAttribute('y1', y1);
-      line.setAttribute('x2', x2);
-      line.setAttribute('y2', y2);
-      line.setAttribute('stroke', color);
-      line.setAttribute('stroke-width', '1');
-      line.setAttribute('marker-end', `url(#${markerId})`);
-      line.dataset.fromId = frag.id;
-      line.dataset.toId = toFrag.id;
-      svg.appendChild(line);
+      // Quadratic bezier — control point perpendicular to midpoint
+      const mx  = (x1 + x2) / 2;
+      const my  = (y1 + y2) / 2;
+      const curve = Math.min(dist * 0.10, 55);
+      const cpx = mx - (dy / dist) * curve;
+      const cpy = my + (dx / dist) * curve;
 
-      // Label at midpoint
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('class', 'conn-line');
+      path.setAttribute('d', `M ${x1} ${y1} Q ${cpx} ${cpy} ${x2} ${y2}`);
+      path.setAttribute('stroke', color);
+      path.setAttribute('stroke-width', '1');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('marker-end', `url(#${markerId})`);
+      path.dataset.fromId = frag.id;
+      path.dataset.toId = toFrag.id;
+      svg.appendChild(path);
+
+      // Label at bezier midpoint (t=0.5)
+      const bmx = 0.25*x1 + 0.5*cpx + 0.25*x2;
+      const bmy = 0.25*y1 + 0.5*cpy + 0.25*y2;
       const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
       label.setAttribute('class', 'conn-label');
-      label.setAttribute('x', mx);
-      label.setAttribute('y', my - 4);
+      label.setAttribute('x', bmx);
+      label.setAttribute('y', bmy - 4);
       label.setAttribute('text-anchor', 'middle');
       label.setAttribute('fill', color);
       label.setAttribute('font-family', 'monospace');

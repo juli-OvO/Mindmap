@@ -1,0 +1,1534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>synthesis</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #f5f0e8;
+  font-family: monospace;
+  color: #3d3028;
+}
+
+#particle-canvas {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 0; pointer-events: none;
+}
+
+#canvas-container {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  z-index: 1; overflow: hidden;
+  background-image: radial-gradient(circle, rgba(139,115,85,0.07) 1.2px, transparent 1.2px);
+  background-size: 28px 28px;
+  cursor: default;
+}
+
+#canvas {
+  position: absolute; top: 0; left: 0;
+  width: 0; height: 0; transform-origin: 0 0;
+}
+
+/* ── Nodes ─────────────────────────────────────────────── */
+.node {
+  position: absolute;
+  border-radius: 50%;
+  border: 0.8px solid #8b7355;
+  background: transparent;
+  cursor: pointer;
+  user-select: none;
+}
+
+.node-center {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 72%;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* Source label — shown in both modes */
+.node-source {
+  font-family: monospace;
+  font-size: 9px;
+  color: #8b7355;
+  letter-spacing: 0.02em;
+}
+
+/* Content — behavior controlled by body class */
+.node-content {
+  font-family: monospace;
+  font-size: 11px;
+  color: #3d3028;
+  line-height: 1.45;
+  word-break: break-word;
+  margin-top: 2px;
+}
+
+/* Type label — below content */
+.node-type {
+  font-family: monospace;
+  font-size: 8px;
+  color: rgba(139,115,85,0.55);
+  margin-top: 3px;
+}
+
+/* Hover tooltip (simplify mode) */
+.node-tooltip {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 180px;
+  background: rgba(245, 240, 232, 0.97);
+  border: 0.7px solid rgba(139,115,85,0.35);
+  padding: 7px 9px;
+  font-family: monospace;
+  font-size: 11px;
+  color: #3d3028;
+  line-height: 1.5;
+  z-index: 200;
+  pointer-events: none;
+  white-space: normal;
+  text-align: left;
+  display: none;
+}
+
+/* ── SIMPLIFY mode ──────────────────────────────────────── */
+body.mode-simplify .node-content { display: none; }
+body.mode-simplify .node-type { display: none; }
+body.mode-simplify .node:hover .node-tooltip {
+  display: block;
+}
+
+/* ── VISIBLE mode ───────────────────────────────────────── */
+body.mode-visible .node-content {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+body.mode-visible .node-tooltip { display: none !important; }
+
+/* ── Shared ─────────────────────────────────────────────── */
+.node-tag-mark {
+  position: absolute;
+  font-family: monospace;
+  font-size: 8px;
+  color: #8b7355;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.node-halo {
+  position: absolute;
+  border-radius: 50%;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(139, 115, 85, 0.04);
+  pointer-events: none;
+}
+
+/* Connection dot — larger hit target */
+.conn-dot {
+  position: absolute;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #8b7355;
+  opacity: 0;
+  cursor: crosshair;
+  top: 50%; right: -7px;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+.node:hover .conn-dot { opacity: 0.45; }
+.conn-dot:hover { opacity: 1 !important; }
+
+/* ── Floating UI ─────────────────────────────────────────── */
+#hint {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: monospace; font-size: 11px;
+  color: #8b7355; pointer-events: none;
+  user-select: none; z-index: 5;
+}
+
+/* View mode toggle — bottom left */
+#view-toggle {
+  position: fixed; bottom: 18px; left: 20px;
+  font-family: monospace; font-size: 10px;
+  color: #8b7355; z-index: 50;
+  user-select: none;
+}
+.vt-opt {
+  cursor: pointer; color: rgba(139,115,85,0.4);
+}
+.vt-opt.active { color: #3d3028; }
+.vt-sep { color: rgba(139,115,85,0.3); }
+
+/* Edit panel */
+#edit-panel {
+  position: fixed; display: none;
+  width: 210px; background: #faf7f2;
+  border: 0.7px solid rgba(139,115,85,0.4);
+  padding: 12px; z-index: 20;
+}
+.edit-panel-row { margin-bottom: 8px; }
+.edit-panel-row select {
+  background: #faf7f2; color: #3d3028;
+  border: 0.7px solid rgba(139,115,85,0.35);
+  font-family: monospace; font-size: 10px;
+  outline: none; cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  padding: 3px 6px; width: 100%;
+}
+.edit-panel-row textarea {
+  width: 100%; background: transparent;
+  border: none;
+  border-bottom: 0.7px solid rgba(139,115,85,0.25);
+  outline: none; color: #3d3028;
+  font-family: monospace; font-size: 11px;
+  resize: none; min-height: 60px;
+  line-height: 1.5; overflow: hidden; padding-bottom: 4px;
+}
+.edit-panel-row textarea::placeholder { color: rgba(139,115,85,0.5); }
+.edit-tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  align-items: center; min-height: 18px; margin-bottom: 6px;
+}
+.edit-tag {
+  font-family: monospace; font-size: 9px;
+  color: #8b7355; border: 0.7px solid rgba(139,115,85,0.4);
+  padding: 2px 5px; cursor: pointer;
+}
+.edit-tag-input {
+  background: transparent; border: none; outline: none;
+  color: #8b7355; font-family: monospace; font-size: 10px; width: 70px;
+}
+.edit-tag-input::placeholder { color: rgba(139,115,85,0.45); }
+.edit-delete {
+  font-family: monospace; font-size: 10px;
+  color: rgba(139,115,85,0.6); cursor: pointer;
+  border: none; background: none; padding: 0; text-align: left;
+}
+.edit-delete:hover { color: #3d3028; }
+
+/* Type picker */
+#type-picker {
+  position: fixed; display: none;
+  background: #faf7f2;
+  border: 0.7px solid rgba(139,115,85,0.4);
+  padding: 6px 10px;
+  font-family: monospace; font-size: 10px; color: #3d3028;
+  z-index: 30; white-space: nowrap;
+  transform: translate(-50%, -50%);
+}
+.picker-opt { cursor: pointer; color: #8b7355; display: inline; }
+.picker-opt:hover { color: #3d3028; }
+
+/* Context menu */
+#context-menu {
+  position: fixed; display: none;
+  background: #faf7f2;
+  border: 0.7px solid rgba(139,115,85,0.4);
+  z-index: 30; padding: 4px 0; min-width: 160px;
+}
+.ctx-item {
+  font-family: monospace; font-size: 10px; color: #3d3028;
+  padding: 5px 12px; cursor: pointer; white-space: nowrap;
+}
+.ctx-item:hover { background: rgba(139,115,85,0.08); }
+.ctx-sep { border: none; border-top: 0.7px solid rgba(139,115,85,0.2); margin: 3px 0; }
+.ctx-conn-item {
+  font-family: monospace; font-size: 9px; color: #8b7355;
+  padding: 4px 12px; cursor: default;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.ctx-conn-delete { cursor: pointer; color: rgba(139,115,85,0.5); flex-shrink: 0; }
+.ctx-conn-delete:hover { color: #3d3028; }
+
+/* Pre-synthesis review */
+#synthesis-btn {
+  position: fixed;
+  top: 18px;
+  right: 20px;
+  z-index: 50;
+  background: #f8c5ad;
+  color: #4e3d34;
+  border: 0.7px solid rgba(139,115,85,0.35);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 10px;
+  cursor: pointer;
+}
+#synthesis-btn:hover { background: #ffcbbc; }
+
+#synthesis-overlay {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: rgba(245, 240, 232, 0.42);
+}
+
+#synthesis-panel {
+  width: min(720px, calc(100vw - 36px));
+  max-height: calc(100vh - 54px);
+  overflow: auto;
+  background: rgba(250, 247, 242, 0.98);
+  border: 0.7px solid rgba(139,115,85,0.35);
+  border-radius: 8px;
+  color: #3d3028;
+  padding: 18px;
+  font-family: monospace;
+  box-shadow: 0 16px 40px rgba(61,48,40,0.10);
+}
+
+.synth-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.synth-title {
+  font-size: 13px;
+  font-weight: 400;
+  margin-bottom: 5px;
+}
+
+.synth-meta {
+  font-size: 10px;
+  color: rgba(61,48,40,0.62);
+  line-height: 1.5;
+}
+
+.synth-close {
+  border: none;
+  background: transparent;
+  color: rgba(139,115,85,0.7);
+  font-family: monospace;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.synth-close:hover { color: #3d3028; }
+
+.synth-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.synth-section {
+  border-top: 0.7px solid rgba(139,115,85,0.24);
+  padding-top: 10px;
+}
+
+.synth-section.full { grid-column: 1 / -1; }
+
+.synth-label {
+  font-size: 10px;
+  color: #8b7355;
+  margin-bottom: 8px;
+}
+
+.keyword-list,
+.connection-list,
+.cluster-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.keyword-row,
+.connection-row,
+.cluster-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 7px;
+  border: 0.7px solid rgba(139,115,85,0.18);
+  background: rgba(255,255,255,0.38);
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.keyword-weight,
+.connection-type,
+.cluster-count {
+  color: rgba(61,48,40,0.58);
+  white-space: nowrap;
+}
+
+.synth-empty {
+  color: rgba(61,48,40,0.5);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.synth-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+  margin-top: 16px;
+}
+
+.synth-secondary,
+.synth-generate {
+  border-radius: 8px;
+  border: 0.7px solid rgba(139,115,85,0.35);
+  font-family: monospace;
+  font-size: 10px;
+  padding: 8px 11px;
+  cursor: pointer;
+}
+
+.synth-secondary {
+  background: transparent;
+  color: #8b7355;
+}
+.synth-secondary:hover { color: #3d3028; }
+
+.synth-generate {
+  background: #f8c5ad;
+  color: #4e3d34;
+}
+.synth-generate:hover { background: #ffcbbc; }
+
+#synthesis-output {
+  display: none;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 0.7px solid rgba(139,115,85,0.24);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .synth-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body class="mode-simplify">
+
+<canvas id="particle-canvas"></canvas>
+
+<div id="canvas-container">
+  <div id="canvas"></div>
+</div>
+
+<div id="hint">double-click to add a fragment</div>
+
+<div id="view-toggle">
+  <span class="vt-opt active" id="vt-simplify">simplify</span>
+  <span class="vt-sep"> · </span>
+  <span class="vt-opt" id="vt-visible">visible</span>
+</div>
+
+<div id="edit-panel"></div>
+<div id="type-picker"></div>
+<div id="context-menu"></div>
+
+<button id="synthesis-btn" type="button">pre-synthesis</button>
+
+<div id="synthesis-overlay">
+  <div id="synthesis-panel" role="dialog" aria-modal="true" aria-labelledby="synthesis-title">
+    <div class="synth-head">
+      <div>
+        <h2 class="synth-title" id="synthesis-title">— confirm synthesis —</h2>
+        <div class="synth-meta" id="synthesis-meta"></div>
+      </div>
+      <button class="synth-close" id="synthesis-close" type="button" aria-label="close">×</button>
+    </div>
+
+    <div class="synth-grid">
+      <section class="synth-section">
+        <div class="synth-label">keywords by weight</div>
+        <div class="keyword-list" id="synthesis-keywords"></div>
+      </section>
+
+      <section class="synth-section">
+        <div class="synth-label">clusters</div>
+        <div class="cluster-list" id="synthesis-clusters"></div>
+      </section>
+
+      <section class="synth-section full">
+        <div class="synth-label">connections</div>
+        <div class="connection-list" id="synthesis-connections"></div>
+      </section>
+    </div>
+
+    <div id="synthesis-output"></div>
+
+    <div class="synth-actions">
+      <button class="synth-secondary" id="synthesis-cancel" type="button">close</button>
+      <button class="synth-generate" id="synthesis-generate" type="button">generate</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════
+const FRAGMENTS_KEY  = 'synthesis-fragments';
+const CANVAS_KEY     = 'synthesis-canvas-state';
+const PARTICLE_COUNT = 300;
+
+const COL_AMBIENT = [122, 181, 168];
+const COL_ECHOES  = [122, 181, 168];
+const COL_LEADS   = [74,  140, 130];
+const COL_COUNTER = [176, 122,  90];
+
+const RADIUS_SIMPLIFY = 32;
+const RADIUS_VISIBLE  = 68;
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+let fragments      = [];
+let canvasState    = { x: 0, y: 0, scale: 1 };
+let fragmentCounter = 0;
+let nodeTextMode   = 'simplify'; // 'simplify' | 'visible'
+
+let particles = [];
+let animTime  = 0;
+
+let isPanning      = false;
+let panStart       = { x: 0, y: 0 };
+let draggingNode   = null;
+let connectingFrom = null;
+let connectMouse   = { x: 0, y: 0 };
+let pendingConn    = null;
+let editFrag       = null;
+let ctxFrag        = null;
+let skipNextClick  = false; // prevents click from closing type picker after conn drag
+
+// ═══════════════════════════════════════════════════════════════
+// DOM REFS
+// ═══════════════════════════════════════════════════════════════
+const pCanvas    = document.getElementById('particle-canvas');
+const pCtx       = pCanvas.getContext('2d');
+const cContainer = document.getElementById('canvas-container');
+const cDiv       = document.getElementById('canvas');
+const hint       = document.getElementById('hint');
+const editPanel  = document.getElementById('edit-panel');
+const typePicker = document.getElementById('type-picker');
+const ctxMenu    = document.getElementById('context-menu');
+const synthBtn   = document.getElementById('synthesis-btn');
+const synthOverlay = document.getElementById('synthesis-overlay');
+const synthMeta  = document.getElementById('synthesis-meta');
+const synthKeywords = document.getElementById('synthesis-keywords');
+const synthClusters = document.getElementById('synthesis-clusters');
+const synthConnections = document.getElementById('synthesis-connections');
+const synthOutput = document.getElementById('synthesis-output');
+const synthGenerate = document.getElementById('synthesis-generate');
+
+let lastSynthesisReview = null;
+
+// ═══════════════════════════════════════════════════════════════
+// STORAGE
+// ═══════════════════════════════════════════════════════════════
+function saveFragments() {
+  localStorage.setItem(FRAGMENTS_KEY, JSON.stringify(fragments));
+}
+function saveCanvas() {
+  localStorage.setItem(CANVAS_KEY, JSON.stringify(canvasState));
+}
+function loadState() {
+  try {
+    const cs = JSON.parse(localStorage.getItem(CANVAS_KEY));
+    if (cs) {
+      canvasState.x     = cs.x     ?? 0;
+      canvasState.y     = cs.y     ?? 0;
+      canvasState.scale = cs.scale ?? 1;
+    }
+  } catch(e) {}
+  try {
+    const fs = JSON.parse(localStorage.getItem(FRAGMENTS_KEY));
+    if (Array.isArray(fs)) {
+      fragments = fs;
+      fragments.forEach(f => {
+        const n = parseInt((f.id || '').replace('f',''), 10);
+        if (!isNaN(n) && n > fragmentCounter) fragmentCounter = n;
+      });
+    }
+  } catch(e) {}
+}
+function generateId() {
+  return 'f' + String(++fragmentCounter).padStart(3, '0');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SYNTHESIS REVIEW CALCULATIONS
+// ═══════════════════════════════════════════════════════════════
+function calculateConvergence(sourceFragments = fragments) {
+  const allTags = sourceFragments.flatMap(f => f.tags || []);
+  const unique = new Set(allTags).size;
+  const total = allTags.length;
+  const concentration = unique > 0 ? total / unique : 0;
+  const normalizedConcentration = Math.min(concentration / 5, 1);
+
+  const totalConnections = sourceFragments.reduce((sum, f) => sum + (f.connections || []).length, 0);
+  const maxConnections = sourceFragments.length * (sourceFragments.length - 1);
+  const density = maxConnections > 0 ? totalConnections / maxConnections : 0;
+
+  return (normalizedConcentration + density) / 2;
+}
+
+function calculateWeight(tag, sourceFragments = fragments) {
+  const frequency = sourceFragments.filter(f => (f.tags || []).includes(tag)).length;
+  const connections = sourceFragments.reduce((sum, f) => {
+    return sum + (f.connections || []).reduce((connSum, c) => {
+      const target = sourceFragments.find(t => t.id === c.to);
+      if (!target || !(target.tags || []).includes(tag)) return connSum;
+      return connSum + (c.type === 'counter' ? 1.5 : 1);
+    }, 0);
+  }, 0);
+  return frequency * (1 + connections);
+}
+
+function buildKeywordWeights() {
+  const tags = [...new Set(fragments.flatMap(f => f.tags || []))];
+  return tags
+    .map(tag => ({ tag, weight: calculateWeight(tag), count: fragments.filter(f => (f.tags || []).includes(tag)).length }))
+    .sort((a, b) => b.weight - a.weight || a.tag.localeCompare(b.tag));
+}
+
+function buildConnectionSummary() {
+  return fragments.flatMap(from => {
+    return (from.connections || []).map(conn => {
+      const to = fragments.find(f => f.id === conn.to);
+      return {
+        fromId: from.id,
+        toId: conn.to,
+        type: conn.type,
+        fromSnippet: (from.content || from.id).trim().slice(0, 42) || from.id,
+        toSnippet: to ? ((to.content || to.id).trim().slice(0, 42) || to.id) : conn.to,
+      };
+    });
+  });
+}
+
+function buildClusters() {
+  const map = new Map();
+  fragments.forEach(f => {
+    (f.tags || []).forEach(tag => {
+      if (!map.has(tag)) map.set(tag, new Set());
+      map.get(tag).add(f.id);
+    });
+  });
+  return [...map.entries()]
+    .map(([tag, ids]) => ({ tag, count: ids.size }))
+    .filter(cluster => cluster.count > 1)
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag))
+    .slice(0, 8);
+}
+
+function buildSynthesisReview() {
+  const keywords = buildKeywordWeights();
+  const connections = buildConnectionSummary();
+  const clusters = buildClusters();
+  return {
+    fragments,
+    keywords,
+    connections,
+    clusters,
+    convergence: calculateConvergence(),
+  };
+}
+
+function renderEmpty(target, text) {
+  target.innerHTML = '';
+  const empty = document.createElement('div');
+  empty.className = 'synth-empty';
+  empty.textContent = text;
+  target.appendChild(empty);
+}
+
+function renderSynthesisReview() {
+  lastSynthesisReview = buildSynthesisReview();
+  const review = lastSynthesisReview;
+
+  synthMeta.textContent =
+    `${fragments.length} fragment${fragments.length !== 1 ? 's' : ''} · ` +
+    `${review.connections.length} connection${review.connections.length !== 1 ? 's' : ''} · ` +
+    `convergence ${review.convergence.toFixed(2)}`;
+
+  synthKeywords.innerHTML = '';
+  if (review.keywords.length === 0) {
+    renderEmpty(synthKeywords, 'No keywords yet. Add tags to fragments before synthesis.');
+  } else {
+    review.keywords.slice(0, 10).forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'keyword-row';
+      const label = document.createElement('span');
+      label.textContent = item.tag;
+      const weight = document.createElement('span');
+      weight.className = 'keyword-weight';
+      weight.textContent = `w ${item.weight.toFixed(1)}`;
+      row.appendChild(label);
+      row.appendChild(weight);
+      synthKeywords.appendChild(row);
+    });
+  }
+
+  synthClusters.innerHTML = '';
+  if (review.clusters.length === 0) {
+    renderEmpty(synthClusters, 'No repeated-tag clusters yet.');
+  } else {
+    review.clusters.forEach(cluster => {
+      const row = document.createElement('div');
+      row.className = 'cluster-row';
+      const label = document.createElement('span');
+      label.textContent = cluster.tag;
+      const count = document.createElement('span');
+      count.className = 'cluster-count';
+      count.textContent = `${cluster.count} fragments`;
+      row.appendChild(label);
+      row.appendChild(count);
+      synthClusters.appendChild(row);
+    });
+  }
+
+  synthConnections.innerHTML = '';
+  if (review.connections.length === 0) {
+    renderEmpty(synthConnections, 'No connections yet. Drag from a node edge into another node to connect them.');
+  } else {
+    review.connections.forEach(conn => {
+      const row = document.createElement('div');
+      row.className = 'connection-row';
+      const label = document.createElement('span');
+      label.textContent = `${conn.fromSnippet} -> ${conn.toSnippet}`;
+      const type = document.createElement('span');
+      type.className = 'connection-type';
+      type.textContent = conn.type;
+      row.appendChild(label);
+      row.appendChild(type);
+      synthConnections.appendChild(row);
+    });
+  }
+}
+
+function openSynthesisReview() {
+  renderSynthesisReview();
+  synthOutput.style.display = 'none';
+  synthOutput.textContent = '';
+  synthGenerate.disabled = false;
+  synthGenerate.textContent = 'generate';
+  synthOverlay.style.display = 'flex';
+}
+
+function closeSynthesisReview() {
+  synthOverlay.style.display = 'none';
+}
+
+async function generateSynthesis() {
+  const review = lastSynthesisReview || buildSynthesisReview();
+  synthGenerate.disabled = true;
+  synthGenerate.textContent = 'generating...';
+  synthOutput.style.display = 'block';
+  synthOutput.textContent = 'thinking through the current fragments...';
+
+  try {
+    const response = await fetch('/api/synthesize', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        trigger: 'give me the concept',
+        fragments: fragments.map(f => ({
+          id: f.id,
+          content: f.content,
+          type: f.type,
+          source: f.source,
+          tags: f.tags,
+          connections: f.connections,
+          project: f.project,
+        })),
+        keywords: review.keywords,
+        connections: review.connections,
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Synthesis failed.');
+    synthOutput.textContent = data.text || 'No synthesis text returned.';
+  } catch (err) {
+    synthOutput.textContent =
+      `Could not generate yet.\n\n${err.message}\n\nRun the local server with ANTHROPIC_API_KEY set, then open the app from http://localhost:3000.`;
+  } finally {
+    synthGenerate.disabled = false;
+    synthGenerate.textContent = 'generate';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CANVAS TRANSFORM
+// ═══════════════════════════════════════════════════════════════
+function applyTransform() {
+  cDiv.style.transform =
+    `translate(${canvasState.x}px,${canvasState.y}px) scale(${canvasState.scale})`;
+}
+function toScreen(wx, wy) {
+  return { x: wx * canvasState.scale + canvasState.x,
+           y: wy * canvasState.scale + canvasState.y };
+}
+function toWorld(sx, sy) {
+  return { x: (sx - canvasState.x) / canvasState.scale,
+           y: (sy - canvasState.y) / canvasState.scale };
+}
+
+function nodeRadius(frag) {
+  const base = nodeTextMode === 'visible' ? RADIUS_VISIBLE : RADIUS_SIMPLIFY;
+  return base + (frag.weight || 0) * 6;
+}
+function nodeScreen(frag) {
+  const s = toScreen(frag.x, frag.y);
+  return { x: s.x, y: s.y, r: nodeRadius(frag) * canvasState.scale };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NOISE
+// ═══════════════════════════════════════════════════════════════
+function noise2(x, y, t) {
+  return (
+    Math.sin(x * 0.8 + t * 0.5) * Math.cos(y * 0.6 + t * 0.3) * 0.5 +
+    Math.sin(x * 0.4 - y * 0.3 + t * 0.2) * 0.3 +
+    Math.cos(x * 1.2 + y * 0.9 - t * 0.4) * 0.2
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PARTICLE SYSTEM
+// ═══════════════════════════════════════════════════════════════
+function spawnParticle() {
+  return {
+    x:      Math.random() * window.innerWidth,
+    y:      Math.random() * window.innerHeight,
+    vx:     (Math.random() - 0.5) * 1.25,
+    vy:     (Math.random() - 0.5) * 1.25,
+    age:    Math.floor(Math.random() * 60),
+    maxAge: 240 + Math.random() * 180,
+    col:    [...COL_AMBIENT],
+  };
+}
+function initParticles() {
+  particles = [];
+  for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(spawnParticle());
+}
+
+function distToSegment(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx*dx + dy*dy;
+  if (len2 === 0) return Math.hypot(px-ax, py-ay);
+  const t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / len2));
+  return Math.hypot(px-(ax+t*dx), py-(ay+t*dy));
+}
+
+function noiseScale() {
+  const n = fragments.reduce((s, f) =>
+    s + f.connections.filter(c => c.type === 'counter').length, 0);
+  return 0.003 + n * 0.002;
+}
+
+function updateParticle(p) {
+  p.age++;
+  if (p.age >= p.maxAge) { Object.assign(p, spawnParticle()); return; }
+
+  const ns  = noiseScale();
+  const ang = noise2(p.x * ns, p.y * ns, animTime * 0.001) * Math.PI * 2;
+  p.vx += Math.cos(ang) * 0.04;
+  p.vy += Math.sin(ang) * 0.04;
+
+  let tc = [...COL_AMBIENT];
+
+  // Node obstacle avoidance — zone is 2.8× node radius so deflection is visible at 14" scale
+  for (const frag of fragments) {
+    const n = nodeScreen(frag);
+    const obs = n.r  + 14;
+    const dx = p.x - n.x, dy = p.y - n.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < obs && dist > 0) {
+      const ux = dx/dist, uy = dy/dist;
+      const str = (1 - dist/obs) * 0.8;
+      p.vx += (ux*0.6 + (-uy)*0.4) * str;
+      p.vy += (uy*0.6 + ( ux)*0.4) * str;
+    }
+  }
+
+  // Connection corridor currents
+  for (const frag of fragments) {
+    for (const conn of frag.connections) {
+      const toFrag = fragments.find(f => f.id === conn.to);
+      if (!toFrag) continue;
+      const a   = nodeScreen(frag);
+      const b   = nodeScreen(toFrag);
+      const avgW = ((frag.weight||0) + (toFrag.weight||0)) / 2;
+      const cw  = (130 + avgW*18) * canvasState.scale;
+      const d   = distToSegment(p.x, p.y, a.x, a.y, b.x, b.y);
+      if (d >= cw) continue;
+
+      const influence = 1 - d/cw;
+      const sdx = b.x-a.x, sdy = b.y-a.y;
+      const slen = Math.hypot(sdx, sdy);
+      if (slen === 0) continue;
+      const ndx = sdx/slen, ndy = sdy/slen;
+
+      let dirX, dirY, speed, color;
+      if (conn.type === 'echoes') {
+        const dir = Math.sin(animTime*0.004 + p.age*0.02) > 0 ? 1 : -1;
+        speed=1.4; dirX=ndx*dir; dirY=ndy*dir; color=COL_ECHOES;
+      } else if (conn.type === 'leads-to') {
+        speed=3.0; dirX=ndx; dirY=ndy; color=COL_LEADS;             // was 1.8
+      } else {
+        const osc=Math.sin(p.age*0.04);
+        speed=1.0; dirX=ndx*osc; dirY=ndy*osc; color=COL_COUNTER;  // was 0.6
+      }
+      p.vx += dirX * speed * influence * 0.42;  // was 0.12
+      p.vy += dirY * speed * influence * 0.42;
+      const bl = influence * 0.22;               // was 0.15
+      tc = tc.map((v,i) => v + (color[i]-v)*bl);
+    }
+  }
+
+  // Color lerp toward target
+  p.col = p.col.map((v,i) => v + (tc[i]-v)*0.05);
+
+  // Low damping so noise force sustains real speed. Terminal velocity = force / (1-damping).
+  // 0.12 / (1-0.985) = 8 px/frame ambient. Max capped at 9.
+  p.vx *= 0.991; p.vy *= 0.991;
+  const spd = Math.hypot(p.vx, p.vy);
+  if (spd > 4.0) { p.vx *= 4.0/spd; p.vy *= 4.0/spd; }
+
+  p.x += p.vx; p.y += p.vy;
+
+  // Wrap
+  if (p.x < -15)                     p.x = window.innerWidth  + 15;
+  if (p.x > window.innerWidth  + 15) p.x = -15;
+  if (p.y < -15)                     p.y = window.innerHeight + 15;
+  if (p.y > window.innerHeight + 15) p.y = -15;
+}
+
+function drawParticle(p) {
+  // Fade in over first 40 frames, fade out over last 15% of life
+  const fadeIn  = Math.min(1, p.age / 40);
+  const fadeOut = p.age > p.maxAge * 0.85
+    ? (p.maxAge - p.age) / (p.maxAge * 0.15) : 1;
+  const spd   = Math.hypot(p.vx, p.vy);
+  // Raised base: 0.45 so particles are visible even when slow
+  const alpha = Math.max(0, Math.min(1, (0.45 + spd * 0.14) * fadeIn * fadeOut));
+  if (alpha < 0.01) return;
+
+  const [r, g, b] = p.col.map(Math.round);
+  pCtx.fillStyle = `rgba(${r},${g},${b},${alpha})`;
+  pCtx.beginPath();
+  pCtx.arc(p.x, p.y, 2.0, 0, Math.PI * 2);
+  pCtx.fill();
+}
+
+function resizeParticleCanvas() {
+  pCanvas.width  = window.innerWidth;
+  pCanvas.height = window.innerHeight;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ANIMATION LOOP
+// ═══════════════════════════════════════════════════════════════
+function loop() {
+  animTime++;
+  pCtx.fillStyle = 'rgba(245, 240, 232, 0.10)';
+  pCtx.fillRect(0, 0, pCanvas.width, pCanvas.height);
+
+  for (const p of particles) { updateParticle(p); drawParticle(p); }
+
+  // Connection preview line
+  if (connectingFrom) {
+    const a = nodeScreen(connectingFrom.fragment);
+    pCtx.beginPath();
+    pCtx.setLineDash([4, 6]);
+    pCtx.strokeStyle = 'rgba(139,115,85,0.55)';
+    pCtx.lineWidth = 1;
+    pCtx.moveTo(a.x, a.y);
+    pCtx.lineTo(connectMouse.x, connectMouse.y);
+    pCtx.stroke();
+    pCtx.setLineDash([]);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NODE RENDERING
+// ═══════════════════════════════════════════════════════════════
+function renderTags(frag, el) {
+  el.querySelectorAll('.node-tag-mark').forEach(t => t.remove());
+  const R = nodeRadius(frag);
+  frag.tags.forEach((tag, i) => {
+    const angle = (i / Math.max(frag.tags.length, 1)) * Math.PI * 2 - Math.PI/2;
+    const tm = document.createElement('span');
+    tm.className = 'node-tag-mark';
+    tm.textContent = tag;
+    tm.style.left = (R + Math.cos(angle) * (R + 2)) + 'px';
+    tm.style.top  = (R + Math.sin(angle) * (R + 2)) + 'px';
+    el.appendChild(tm);
+  });
+}
+
+function buildNode(frag) {
+  const R  = nodeRadius(frag);
+  const el = document.createElement('div');
+  el.className  = 'node';
+  el.dataset.id = frag.id;
+  el.style.left   = (frag.x - R) + 'px';
+  el.style.top    = (frag.y - R) + 'px';
+  el.style.width  = (R * 2)      + 'px';
+  el.style.height = (R * 2)      + 'px';
+
+  // Gravity halo
+  const gravR = (nodeRadius(frag)  + 28) + (frag.weight||0) * 20;
+  const halo  = document.createElement('div');
+  halo.className    = 'node-halo';
+  halo.style.width  = (gravR * 2) + 'px';
+  halo.style.height = (gravR * 2) + 'px';
+  el.appendChild(halo);
+
+  // Center
+  const center = document.createElement('div');
+  center.className = 'node-center';
+
+  const srcEl = document.createElement('div');
+  srcEl.className   = 'node-source';
+  srcEl.textContent = frag.source || 'intuition';
+
+  const contentEl = document.createElement('div');
+  contentEl.className   = 'node-content';
+  contentEl.textContent = frag.content || '';
+
+  const typeEl = document.createElement('div');
+  typeEl.className   = 'node-type';
+  typeEl.textContent = frag.type;
+
+  center.appendChild(srcEl);
+  center.appendChild(contentEl);
+  center.appendChild(typeEl);
+  el.appendChild(center);
+
+  // Hover tooltip (used in simplify mode)
+  const tooltip = document.createElement('div');
+  tooltip.className   = 'node-tooltip';
+  tooltip.textContent = frag.content || '';
+  el.appendChild(tooltip);
+
+  // Tags on perimeter
+  renderTags(frag, el);
+
+  // Connection dot
+  const dot = document.createElement('div');
+  dot.className     = 'conn-dot';
+  dot.dataset.fromId = frag.id;
+  el.appendChild(dot);
+
+  // Click → edit panel
+  el.addEventListener('click', (e) => {
+    if (e.target.closest('.conn-dot')) return;
+    e.stopPropagation();
+    openEditPanel(frag);
+  });
+
+  // Node drag
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.conn-dot')) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    draggingNode = {
+      fragment: frag, el,
+      startMX: e.clientX, startMY: e.clientY,
+      startFX: frag.x,   startFY: frag.y,
+    };
+    el.style.opacity = '0.8';
+    cContainer.style.cursor = 'grabbing';
+  });
+
+  // Right-click
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    ctxFrag = frag;
+    showContextMenu(e.clientX, e.clientY, frag);
+  });
+
+  // Connection dot drag
+  dot.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    connectingFrom = { fragment: frag };
+    connectMouse   = { x: e.clientX, y: e.clientY };
+  });
+
+  cDiv.appendChild(el);
+  return el;
+}
+
+function rebuildNode(frag) {
+  const old = cDiv.querySelector(`[data-id="${frag.id}"]`);
+  if (old) old.remove();
+  buildNode(frag);
+}
+
+function rebuildAllNodes() {
+  fragments.forEach(f => rebuildNode(f));
+}
+
+function updateNodeDisplay(frag) {
+  const el = cDiv.querySelector(`[data-id="${frag.id}"]`);
+  if (!el) return;
+  el.querySelector('.node-content').textContent = frag.content || '';
+  el.querySelector('.node-source').textContent  = frag.source  || 'intuition';
+  el.querySelector('.node-type').textContent    = frag.type;
+  const tip = el.querySelector('.node-tooltip');
+  if (tip) tip.textContent = frag.content || '';
+  renderTags(frag, el);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HINT
+// ═══════════════════════════════════════════════════════════════
+function updateHint() {
+  hint.style.display = fragments.length > 0 ? 'none' : 'block';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DELETE
+// ═══════════════════════════════════════════════════════════════
+function deleteFragment(id) {
+  const el = cDiv.querySelector(`[data-id="${id}"]`);
+  if (el) el.remove();
+  fragments = fragments.filter(f => f.id !== id);
+  fragments.forEach(f => { f.connections = f.connections.filter(c => c.to !== id); });
+  saveFragments();
+  updateHint();
+  if (editFrag && editFrag.id === id) closeEditPanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VIEW MODE TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function setNodeMode(mode) {
+  nodeTextMode = mode;
+  document.body.className = 'mode-' + mode;
+  document.getElementById('vt-simplify').classList.toggle('active', mode === 'simplify');
+  document.getElementById('vt-visible').classList.toggle('active', mode === 'visible');
+  // Resize all nodes since radius changes between modes
+  rebuildAllNodes();
+}
+
+document.getElementById('vt-simplify').addEventListener('click', () => setNodeMode('simplify'));
+document.getElementById('vt-visible').addEventListener('click',  () => setNodeMode('visible'));
+
+synthBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openSynthesisReview();
+});
+document.getElementById('synthesis-close').addEventListener('click', closeSynthesisReview);
+document.getElementById('synthesis-cancel').addEventListener('click', closeSynthesisReview);
+synthGenerate.addEventListener('click', generateSynthesis);
+synthOverlay.addEventListener('click', (e) => {
+  if (e.target === synthOverlay) closeSynthesisReview();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EDIT PANEL
+// ═══════════════════════════════════════════════════════════════
+function openEditPanel(frag) {
+  editFrag = frag;
+  const ns = nodeScreen(frag);
+  let left = ns.x + ns.r + 16;
+  let top  = ns.y - 80;
+  if (left + 220 > window.innerWidth - 10) left = ns.x - ns.r - 226;
+  left = Math.max(8, left);
+  top  = Math.max(8, Math.min(top, window.innerHeight - 260));
+  editPanel.style.left    = left + 'px';
+  editPanel.style.top     = top  + 'px';
+  editPanel.style.display = 'block';
+  renderEditPanel(frag);
+}
+
+function renderEditPanel(frag) {
+  editPanel.innerHTML = '';
+
+  // Textarea
+  const taRow = document.createElement('div');
+  taRow.className = 'edit-panel-row';
+  const ta = document.createElement('textarea');
+  ta.value = frag.content || '';
+  ta.placeholder = 'fragment...';
+  ta.addEventListener('input', () => {
+    frag.content = ta.value;
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    updateNodeDisplay(frag);
+    saveFragments();
+  });
+  taRow.appendChild(ta);
+  editPanel.appendChild(taRow);
+  setTimeout(() => { ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; }, 0);
+
+  // Type select
+  const tyRow = document.createElement('div');
+  tyRow.className = 'edit-panel-row';
+  const tyS = document.createElement('select');
+  ['feeling','reference','material','question','decision'].forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt; o.textContent = opt;
+    if (frag.type === opt) o.selected = true;
+    tyS.appendChild(o);
+  });
+  tyS.addEventListener('change', () => {
+    frag.type = tyS.value;
+    updateNodeDisplay(frag);
+    saveFragments();
+  });
+  tyRow.appendChild(tyS);
+  editPanel.appendChild(tyRow);
+
+  // Source select
+  const srRow = document.createElement('div');
+  srRow.className = 'edit-panel-row';
+  const srS = document.createElement('select');
+  ['intuition','reference','both'].forEach(opt => {
+    const o = document.createElement('option');
+    o.value = opt; o.textContent = opt;
+    if (frag.source === opt) o.selected = true;
+    srS.appendChild(o);
+  });
+  srS.addEventListener('change', () => {
+    frag.source = srS.value;
+    updateNodeDisplay(frag);
+    saveFragments();
+  });
+  srRow.appendChild(srS);
+  editPanel.appendChild(srRow);
+
+  // Tags
+  const tagsDiv = document.createElement('div');
+  tagsDiv.className = 'edit-tags';
+
+  function refreshEditTags() {
+    tagsDiv.querySelectorAll('.edit-tag').forEach(e => e.remove());
+    const inp = tagsDiv.querySelector('.edit-tag-input');
+    frag.tags.forEach(tag => {
+      const sp = document.createElement('span');
+      sp.className = 'edit-tag'; sp.textContent = tag; sp.title = 'click to remove';
+      sp.addEventListener('click', () => {
+        frag.tags = frag.tags.filter(t => t !== tag);
+        saveFragments();
+        renderTags(frag, cDiv.querySelector(`[data-id="${frag.id}"]`));
+        refreshEditTags();
+      });
+      tagsDiv.insertBefore(sp, inp);
+    });
+  }
+
+  const tagInp = document.createElement('input');
+  tagInp.className = 'edit-tag-input'; tagInp.type = 'text'; tagInp.placeholder = 'add tag...';
+  tagInp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const v = tagInp.value.trim();
+      if (v && !frag.tags.includes(v)) {
+        frag.tags.push(v);
+        saveFragments();
+        renderTags(frag, cDiv.querySelector(`[data-id="${frag.id}"]`));
+        refreshEditTags();
+      }
+      tagInp.value = '';
+    }
+  });
+  tagsDiv.appendChild(tagInp);
+  refreshEditTags();
+  editPanel.appendChild(tagsDiv);
+
+  // Delete
+  const del = document.createElement('button');
+  del.className = 'edit-delete'; del.textContent = 'delete fragment';
+  del.addEventListener('click', () => deleteFragment(frag.id));
+  editPanel.appendChild(del);
+}
+
+function closeEditPanel() {
+  editPanel.style.display = 'none';
+  editFrag = null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CONTEXT MENU
+// ═══════════════════════════════════════════════════════════════
+function showContextMenu(mx, my, frag) {
+  ctxMenu.innerHTML = '';
+
+  const del = document.createElement('div');
+  del.className = 'ctx-item'; del.textContent = 'delete fragment';
+  del.addEventListener('click', () => { deleteFragment(frag.id); hideContextMenu(); });
+  ctxMenu.appendChild(del);
+
+  if (frag.connections.length > 0) {
+    const sep = document.createElement('hr');
+    sep.className = 'ctx-sep';
+    ctxMenu.appendChild(sep);
+
+    frag.connections.forEach(conn => {
+      const toFrag  = fragments.find(f => f.id === conn.to);
+      const snippet = toFrag ? (toFrag.content || toFrag.id).slice(0,12) : conn.to;
+      const row = document.createElement('div');
+      row.className = 'ctx-conn-item';
+      const lbl = document.createElement('span');
+      lbl.textContent = `→ ${conn.type} → ${snippet}`;
+      const x = document.createElement('span');
+      x.className = 'ctx-conn-delete'; x.textContent = '×';
+      x.addEventListener('click', () => {
+        frag.connections = frag.connections.filter(c => !(c.to===conn.to && c.type===conn.type));
+        saveFragments();
+        hideContextMenu();
+      });
+      row.appendChild(lbl); row.appendChild(x);
+      ctxMenu.appendChild(row);
+    });
+  }
+
+  let left = mx, top = my;
+  if (left + 180 > window.innerWidth)  left = mx - 180;
+  if (top  + 160 > window.innerHeight) top  = my - (ctxMenu.offsetHeight || 80);
+  ctxMenu.style.left = left + 'px';
+  ctxMenu.style.top  = top  + 'px';
+  ctxMenu.style.display = 'block';
+}
+function hideContextMenu() {
+  ctxMenu.style.display = 'none'; ctxFrag = null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TYPE PICKER
+// ═══════════════════════════════════════════════════════════════
+function showTypePicker(fromId, toId) {
+  pendingConn = { fromId, toId };
+  const fromFrag = fragments.find(f => f.id === fromId);
+  const toFrag   = fragments.find(f => f.id === toId);
+  const a = nodeScreen(fromFrag), b = nodeScreen(toFrag);
+
+  typePicker.innerHTML = '';
+  ['echoes','leads-to','counter'].forEach((type, i) => {
+    if (i > 0) typePicker.appendChild(document.createTextNode(' · '));
+    const span = document.createElement('span');
+    span.className = 'picker-opt'; span.textContent = type;
+    span.addEventListener('click', () => confirmConnection(type));
+    typePicker.appendChild(span);
+  });
+
+  typePicker.style.left    = ((a.x + b.x) / 2) + 'px';
+  typePicker.style.top     = ((a.y + b.y) / 2) + 'px';
+  typePicker.style.display = 'block';
+}
+
+function confirmConnection(type) {
+  if (!pendingConn) return;
+  const frag = fragments.find(f => f.id === pendingConn.fromId);
+  if (frag) {
+    frag.connections = frag.connections.filter(c => c.to !== pendingConn.toId);
+    frag.connections.push({ to: pendingConn.toId, type });
+    saveFragments();
+  }
+  typePicker.style.display = 'none';
+  pendingConn = null;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CANVAS PAN (mouse drag on empty space)
+// ═══════════════════════════════════════════════════════════════
+cContainer.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest('.node')) return;
+  isPanning = true;
+  panStart  = { x: e.clientX, y: e.clientY };
+  cContainer.style.cursor = 'grab';
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ZOOM + TRACKPAD PAN (wheel event)
+// Ctrl+wheel → zoom. Plain wheel (trackpad two-finger scroll) → pan.
+// ═══════════════════════════════════════════════════════════════
+cContainer.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (e.ctrlKey) {
+    // Pinch-to-zoom or Ctrl+scroll → zoom
+    const factor   = e.deltaY < 0 ? 1.08 : 0.93;
+    const newScale = Math.min(2, Math.max(0.3, canvasState.scale * factor));
+    const rect     = cContainer.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    canvasState.x = mx - (mx - canvasState.x) * (newScale / canvasState.scale);
+    canvasState.y = my - (my - canvasState.y) * (newScale / canvasState.scale);
+    canvasState.scale = newScale;
+  } else {
+    // Trackpad two-finger scroll → pan
+    canvasState.x -= e.deltaX;
+    canvasState.y -= e.deltaY;
+  }
+  applyTransform();
+  saveCanvas();
+}, { passive: false });
+
+// ═══════════════════════════════════════════════════════════════
+// DOUBLE-CLICK → CREATE NODE
+// ═══════════════════════════════════════════════════════════════
+cContainer.addEventListener('dblclick', (e) => {
+  if (e.target.closest('.node')) return;
+  const rect = cContainer.getBoundingClientRect();
+  const w = toWorld(e.clientX - rect.left, e.clientY - rect.top);
+
+  const frag = {
+    id: generateId(),
+    timestamp: new Date().toISOString(),
+    content: '', type: 'feeling', source: 'intuition',
+    tags: [], connections: [],
+    project: 'synthesis-tool', weight: 0,
+    x: w.x, y: w.y,
+  };
+
+  fragments.push(frag);
+  saveFragments();
+  buildNode(frag);
+  updateHint();
+  openEditPanel(frag);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// GLOBAL MOUSE EVENTS
+// ═══════════════════════════════════════════════════════════════
+document.addEventListener('mousemove', (e) => {
+  if (isPanning) {
+    canvasState.x += e.clientX - panStart.x;
+    canvasState.y += e.clientY - panStart.y;
+    panStart = { x: e.clientX, y: e.clientY };
+    applyTransform();
+  }
+
+  if (draggingNode) {
+    const { fragment, el, startMX, startMY, startFX, startFY } = draggingNode;
+    fragment.x = startFX + (e.clientX - startMX) / canvasState.scale;
+    fragment.y = startFY + (e.clientY - startMY) / canvasState.scale;
+    const R = nodeRadius(fragment);
+    el.style.left = (fragment.x - R) + 'px';
+    el.style.top  = (fragment.y - R) + 'px';
+    if (editFrag && editFrag.id === fragment.id) {
+      const ns = nodeScreen(fragment);
+      let left = ns.x + ns.r + 16;
+      let top  = ns.y - 80;
+      if (left + 220 > window.innerWidth - 10) left = ns.x - ns.r - 226;
+      left = Math.max(8, left);
+      top  = Math.max(8, Math.min(top, window.innerHeight - 260));
+      editPanel.style.left = left + 'px';
+      editPanel.style.top  = top  + 'px';
+    }
+  }
+
+  if (connectingFrom) {
+    connectMouse = { x: e.clientX, y: e.clientY };
+  }
+});
+
+document.addEventListener('mouseup', (e) => {
+  if (isPanning) {
+    isPanning = false;
+    cContainer.style.cursor = 'default';
+    saveCanvas();
+  }
+
+  if (draggingNode) {
+    draggingNode.el.style.opacity = '1';
+    saveFragments();
+    draggingNode = null;
+    cContainer.style.cursor = 'default';
+  }
+
+  if (connectingFrom) {
+    const underEl    = document.elementFromPoint(e.clientX, e.clientY);
+    const targetNode = underEl ? underEl.closest('.node') : null;
+    if (targetNode) {
+      const toId   = targetNode.dataset.id;
+      const fromId = connectingFrom.fragment.id;
+      if (toId && toId !== fromId) {
+        // Prevent the upcoming click event from closing the type picker
+        skipNextClick = true;
+        showTypePicker(fromId, toId);
+      }
+    }
+    connectingFrom = null;
+  }
+});
+
+// Click outside → close menus/panels
+document.addEventListener('click', (e) => {
+  // Skip one click cycle after a connection is established
+  if (skipNextClick) { skipNextClick = false; return; }
+
+  if (!ctxMenu.contains(e.target)) hideContextMenu();
+
+  if (typePicker.style.display === 'block' && !typePicker.contains(e.target)) {
+    typePicker.style.display = 'none';
+    pendingConn = null;
+  }
+
+  if (editPanel.style.display === 'block' &&
+      !editPanel.contains(e.target) &&
+      !e.target.closest('.node') &&
+      !e.target.closest('#synthesis-btn') &&
+      !e.target.closest('#synthesis-panel') &&
+      !e.target.closest('#view-toggle')) {
+    closeEditPanel();
+  }
+});
+
+document.addEventListener('contextmenu', (e) => {
+  if (!e.target.closest('.node')) hideContextMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && synthOverlay.style.display === 'flex') {
+    closeSynthesisReview();
+  }
+});
+
+window.addEventListener('resize', resizeParticleCanvas);
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+function init() {
+  resizeParticleCanvas();
+  loadState();
+  applyTransform();
+  fragments.forEach(f => buildNode(f));
+  updateHint();
+  initParticles();
+  requestAnimationFrame(loop);
+}
+
+init();
+</script>
+</body>
+</html>
