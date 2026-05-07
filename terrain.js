@@ -251,8 +251,31 @@ window.Terrain = {
     ctx.drawImage(_offscreen, 0, 0);
     ctx.restore();
   },
-  getTerrainDensityAt(x, y)  { return 0; },
-  getTerrainHeightAt(x, y)   { return 0; },
-  getTerrainGradientAt(x, y) { return { dx: 0, dy: 0 }; },
-  invalidate()                {},
+  getTerrainDensityAt(x, y) {
+    if (!_cache) return 0;
+    const { f, cols, rows, worldMinX, worldMinY } = _cache;
+    const col = (x - worldMinX) / TERRAIN_GRID_SIZE;
+    const row = (y - worldMinY) / TERRAIN_GRID_SIZE;
+    const c0 = Math.floor(col), r0 = Math.floor(row);
+    const c1 = c0 + 1,          r1 = r0 + 1;
+    if (c0 < 0 || r0 < 0 || c1 >= cols || r1 >= rows) return 0;
+    const fx = col - c0, fy = row - r0;
+    return f[ r0 * cols + c0] * (1-fx) * (1-fy)
+         + f[ r0 * cols + c1] *    fx  * (1-fy)
+         + f[ r1 * cols + c0] * (1-fx) *    fy
+         + f[ r1 * cols + c1] *    fx  *    fy;
+  },
+  getTerrainHeightAt(x, y) {
+    return Math.min(1, this.getTerrainDensityAt(x, y) / 2.0);
+  },
+  getTerrainGradientAt(x, y) {
+    const eps = TERRAIN_GRID_SIZE;
+    const dx = this.getTerrainDensityAt(x + eps, y) - this.getTerrainDensityAt(x - eps, y);
+    const dy = this.getTerrainDensityAt(x, y + eps) - this.getTerrainDensityAt(x, y - eps);
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    return { dx: dx / len, dy: dy / len };
+  },
+  invalidate() {
+    _dirty = true;
+  },
 };
