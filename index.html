@@ -6,7 +6,7 @@
 <title>synthesis</title>
 <link rel="stylesheet" href="style.css">
 </head>
-<body class="mode-simplify">
+<body>
 
 <canvas id="particle-canvas"></canvas>
 
@@ -14,13 +14,16 @@
   <div id="canvas">
     <svg id="conn-svg" style="position:absolute;top:0;left:0;width:1px;height:1px;overflow:visible;pointer-events:none;">
       <defs>
-        <marker id="arrow-echoes"   markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(139,115,85,0.6)"/></marker>
-        <marker id="arrow-leads-to" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(80,120,100,0.7)"/></marker>
-        <marker id="arrow-counter"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(160,80,80,0.7)"/></marker>
+        <!-- Arrow markers match the three canonical relationship types -->
+        <marker id="arrow-parallel"    markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(139,115,85,0.6)"/></marker>
+        <marker id="arrow-leads_to"    markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(80,120,100,0.7)"/></marker>
+        <marker id="arrow-contradicts" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="rgba(160,80,80,0.7)"/></marker>
       </defs>
     </svg>
   </div>
 </div>
+
+<input type="text" id="project-title-input" placeholder="Untitled Project" autocomplete="off" spellcheck="false">
 
 <div id="hint">double-click to add a fragment</div>
 
@@ -58,16 +61,36 @@
   </div>
 </div>
 
-<div id="view-toggle">
-  <span class="vt-opt active" id="vt-simplify">simplify</span>
-  <span class="vt-sep"> · </span>
-  <span class="vt-opt" id="vt-visible">visible</span>
+<div id="io-controls">
+  <button id="export-btn">export</button>
+  <span class="ic-sep"> · </span>
+  <button id="import-btn">import</button>
+  <span class="ic-sep"> · </span>
+  <button id="clear-btn">clear all</button>
+  <span class="ic-sep"> · </span>
+  <button id="transcripts-btn">transcripts</button>
+  <input type="file" id="import-file" accept=".json" style="display:none">
+</div>
+
+<div id="transcript-panel">
+  <div id="tp-header">
+    <span>transcripts</span>
+    <button id="tp-close">×</button>
+  </div>
+  <div id="tp-body">
+    <div id="tp-session-list"></div>
+    <div id="tp-content">
+      <div id="tp-meta"></div>
+      <div id="tp-text"></div>
+    </div>
+  </div>
 </div>
 
 <div id="edit-panel"></div>
 <div id="type-picker"></div>
 <div id="context-menu"></div>
 
+<button id="suggest-btn">suggest directions</button>
 <button id="synth-btn">synthesize →</button>
 
 <div id="synth-overlay">
@@ -75,6 +98,9 @@
 </div>
 
 <div id="synth-output"></div>
+
+<!-- Critique panel — shown after suggest directions, separate from graph -->
+<div id="critique-panel" style="display:none"></div>
 
 <!-- Transcript viewer overlay -->
 <div id="transcript-overlay">
@@ -102,18 +128,37 @@
     </div>
     <div id="patch-footer">
       <button id="patch-cancel">cancel</button>
-      <button id="patch-accept">accept all →</button>
+      <button id="patch-accept">commit →</button>
     </div>
   </div>
 </div>
 
 <div id="session-timeline"></div>
 
+<!-- Thinking state label — subtle top-right readout, auto-classified from graph -->
+<div id="thinking-state-label"></div>
+
+<!-- Live voice transcription overlay -->
+<div id="voice-transcript-overlay">
+  <div id="voice-transcript-text"></div>
+  <div id="vto-controls">
+    <button id="vto-cancel">cancel</button>
+    <button id="vto-send">send →</button>
+  </div>
+</div>
+
 <script src="data.js"></script>
+<script src="terrain.js"></script>
 <script src="particles.js"></script>
 <script src="synthesis.js"></script>
 <script src="patterns.js"></script>
 <script src="app.js"></script>
+<!-- Graph analysis + thinking state (local, no API) -->
+<script src="js/analysis/graphAnalysis.js"></script>
+<script src="js/analysis/classifyThinkingState.js"></script>
+<!-- Semantic layout -->
+<script src="js/layout/layoutPresets.js"></script>
+<script src="js/layout/applySemanticLayout.js"></script>
 <script src="input.js"></script>
 </body>
 </html>
