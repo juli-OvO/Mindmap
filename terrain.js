@@ -92,7 +92,8 @@ function _checkDirty() {
   let posHash = 0, wtHash = 0;
   for (let i = 0; i < frags.length; i++) { posHash += Math.round(frags[i].x) * 31 + Math.round(frags[i].y) * 17 + i * 7; wtHash += frags[i].weight || 1; }
 
-  const txChanged = Math.abs(state.x - _lastTx) > 1 || Math.abs(state.y - _lastTy) > 1
+  const txChanged = Math.abs(state.x - _lastTx) > TERRAIN_GRID_SIZE
+                 || Math.abs(state.y - _lastTy) > TERRAIN_GRID_SIZE
                  || Math.abs(state.scale - _lastScale) > 0.005;
 
   if (len === _lastLen && posHash === _lastPosHash && wtHash === _lastWtHash && !txChanged && !_dirty) return;
@@ -145,6 +146,15 @@ function _drawFillBand(ctx, f, cols, rows, worldMinX, worldMinY, threshold, r, g
   }
 }
 
+// Module-level: maps marching squares case index to edge pair names
+// Each value is [edge1, edge2] where edges are 'top'|'rgt'|'bot'|'lft'
+const _MARCH_EDGES = {
+   1: ['lft','top'],  2: ['top','rgt'],  3: ['lft','rgt'],
+   4: ['rgt','bot'],  6: ['top','bot'],  7: ['lft','bot'],
+   8: ['bot','lft'],  9: ['bot','top'], 11: ['bot','rgt'],
+  12: ['rgt','lft'], 13: ['rgt','top'], 14: ['lft','top'],
+};
+
 function _marchLines(ctx, f, cols, rows, worldMinX, worldMinY, threshold, lineColor, lineWidth) {
   const [lr, lg, lb, la] = lineColor;
   ctx.strokeStyle = `rgba(${lr},${lg},${lb},${la})`;
@@ -184,22 +194,17 @@ function _marchLines(ctx, f, cols, rows, worldMinX, worldMinY, threshold, lineCo
       const bot = [x0 + lerp(0, G, ei(v01, v11, threshold)), y0 + G    ];
       const lft = [x0,                                        y0 + lerp(0, G, ei(v00, v01, threshold))];
 
-      const segMap = {
-         1: [lft, top],  2: [top, rgt],  3: [lft, rgt],
-         4: [rgt, bot],  6: [top, bot],  7: [lft, bot],
-         8: [bot, lft],  9: [bot, top], 11: [bot, rgt],
-        12: [rgt, lft], 13: [rgt, top], 14: [lft, top],
-      };
+      const edges = { top, rgt, bot, lft };
 
       let pairs;
-      if      (idx === 5)  pairs = [[lft, top], [rgt, bot]];
-      else if (idx === 10) pairs = [[top, rgt], [bot, lft]];
-      else                 pairs = segMap[idx] ? [segMap[idx]] : null;
+      if      (idx === 5)  pairs = [['lft','top'], ['rgt','bot']];
+      else if (idx === 10) pairs = [['top','rgt'], ['bot','lft']];
+      else                 pairs = _MARCH_EDGES[idx] ? [_MARCH_EDGES[idx]] : null;
 
       if (!pairs) continue;
-      for (const [p0, p1] of pairs) {
-        ctx.moveTo(p0[0], p0[1]);
-        ctx.lineTo(p1[0], p1[1]);
+      for (const [e0, e1] of pairs) {
+        ctx.moveTo(edges[e0][0], edges[e0][1]);
+        ctx.lineTo(edges[e1][0], edges[e1][1]);
       }
     }
   }
