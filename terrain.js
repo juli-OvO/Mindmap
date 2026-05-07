@@ -39,7 +39,7 @@ let _dirty = true;
 let _lastLen = -1;
 let _lastPosHash = NaN;
 let _lastWtHash  = NaN;
-let _lastTx = NaN, _lastTy = NaN, _lastScale = NaN;
+let _lastTx = Infinity, _lastTy = Infinity, _lastScale = Infinity;
 
 function _remapWeight(w, wMin, wMax) {
   const span = wMax - wMin;
@@ -76,9 +76,10 @@ function _checkDirty() {
   const frags = typeof fragments !== 'undefined' ? fragments : [];
   const state = typeof canvasState !== 'undefined' ? canvasState : { x:0, y:0, scale:1 };
 
+  if (!state.scale || !isFinite(state.scale)) return;
   const len = frags.length;
   let posHash = 0, wtHash = 0;
-  for (const f of frags) { posHash += Math.round(f.x) + Math.round(f.y); wtHash += f.weight || 1; }
+  for (let i = 0; i < frags.length; i++) { posHash += Math.round(frags[i].x) * 31 + Math.round(frags[i].y) * 17 + i * 7; wtHash += frags[i].weight || 1; }
 
   const txChanged = Math.abs(state.x - _lastTx) > 1 || Math.abs(state.y - _lastTy) > 1
                  || Math.abs(state.scale - _lastScale) > 0.005;
