@@ -29,11 +29,65 @@ function openTranscriptView(sessionId) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// TRANSCRIPT PANEL
+// ═══════════════════════════════════════════════════════════════
+function openTranscriptPanel() {
+  renderSessionList();
+  document.getElementById('transcript-panel')?.classList.add('open');
+  const recent = sessions.slice().reverse().find(s => s.transcript);
+  if (recent) showTranscript(recent.id);
+}
+
+function closeTranscriptPanel() {
+  document.getElementById('transcript-panel')?.classList.remove('open');
+}
+
+function renderSessionList() {
+  const list = document.getElementById('tp-session-list');
+  if (!list) return;
+  list.innerHTML = '';
+  sessions.slice().reverse().forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'tp-session-item';
+    item.dataset.id = s.id;
+    const date = s.timestamp ? new Date(s.timestamp).toLocaleDateString() : s.id;
+    const type = s.inputType === 'voice' ? 'v' : s.inputType === 'text' ? 't' : '·';
+    const count = s.fragmentIds ? s.fragmentIds.length : 0;
+    const dateEl = document.createElement('span');
+    dateEl.className = 'tp-si-date';
+    dateEl.textContent = date;
+    const metaEl = document.createElement('span');
+    metaEl.className = 'tp-si-meta';
+    metaEl.textContent = type + '  ' + count + (count === 1 ? ' node' : ' nodes');
+    item.appendChild(dateEl);
+    item.appendChild(metaEl);
+    if (!s.transcript) item.style.opacity = '0.38';
+    item.addEventListener('click', () => showTranscript(s.id));
+    list.appendChild(item);
+  });
+}
+
+function showTranscript(sessionId) {
+  const s = sessions.find(sess => sess.id === sessionId);
+  if (!s) return;
+  document.querySelectorAll('.tp-session-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === sessionId);
+  });
+  const meta = document.getElementById('tp-meta');
+  const text = document.getElementById('tp-text');
+  if (!meta || !text) return;
+  const date = s.timestamp ? new Date(s.timestamp).toLocaleString() : '';
+  meta.textContent = [date, s.inputType].filter(Boolean).join('  ·  ');
+  text.textContent = s.transcript || '(no transcript saved for this session)';
+}
+
+// ═══════════════════════════════════════════════════════════════
 // PENDING PATCH STATE
 // ═══════════════════════════════════════════════════════════════
 let pendingPatch          = null;
 let pendingPatchRaw       = '';
 let pendingPatchInputType = '';
+let reviewFragments       = [];
 
 // ═══════════════════════════════════════════════════════════════
 // CLEANUP
@@ -277,6 +331,46 @@ function resolveRefLabel(ref, newNodes) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PATCH REVIEW — editable row builder
+// ═══════════════════════════════════════════════════════════════
+const REVIEW_TYPES = ['feeling','observation','question','tension','anchor','reference','material','decision'];
+
+function buildReviewRow(n, idx, onDelete) {
+  const row = document.createElement('div');
+  row.className = 'pp-review-row';
+
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'pp-review-label';
+  inp.value = n.label || '';
+  inp.addEventListener('input', () => { reviewFragments[idx].label = inp.value; });
+
+  const sel = document.createElement('select');
+  sel.className = 'pp-review-type';
+  REVIEW_TYPES.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    if ((n.type || 'observation') === t) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.addEventListener('change', () => { reviewFragments[idx].type = sel.value; });
+
+  const del = document.createElement('button');
+  del.className = 'pp-review-delete';
+  del.textContent = '×';
+  del.addEventListener('click', () => {
+    reviewFragments[idx] = null;
+    row.remove();
+    onDelete();
+  });
+
+  row.appendChild(inp);
+  row.appendChild(sel);
+  row.appendChild(del);
+  return row;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // PATCH REVIEW — render and show popup
 // ═══════════════════════════════════════════════════════════════
 function showPatchReview(patch, rawTranscript, inputType) {
@@ -301,17 +395,16 @@ function showPatchReview(patch, rawTranscript, inputType) {
     return sec;
   }
 
-  // new nodes
+  // new nodes — editable
   if (patch.newNodes.length) {
-    const sec = makeSection(`new  (${patch.newNodes.length})`);
-    patch.newNodes.forEach(n => {
-      const row = document.createElement('div');
-      row.className = 'pp-node-new';
-      row.innerHTML =
-        `<div>${n.label || ''}</div>` +
-        `<div class="pp-node-span">${n.sourceSpan || ''}</div>`;
-      sec.appendChild(row);
-    });
+    reviewFragments = patch.newNodes.map(n => ({ ...n }));
+    const sec = makeSection('');
+    const titleEl = sec.querySelector('.pp-section-title');
+    function updateTitle() {
+      titleEl.textContent = 'new  (' + reviewFragments.filter(Boolean).length + ')';
+    }
+    updateTitle();
+    reviewFragments.forEach((n, idx) => sec.appendChild(buildReviewRow(n, idx, updateTitle)));
     sectionsEl.appendChild(sec);
   }
 
@@ -381,6 +474,14 @@ function showPatchReview(patch, rawTranscript, inputType) {
 
 // ═══════════════════════════════════════════════════════════════
 // APPLY PATCH — called on "accept all"
+// Pipeline order:
+//   1. Build fragment data + resolve relationships
+//   2. analyzeGraph()          — count edges, ratios, chains
+//   3. classifyThinkingState() — determine current state
+//   4. applySemanticLayout()   — reposition ALL nodes by state
+//   5. setParticleMode()       — update particle behavior
+//   6. rebuildAllNodes()       — redraw DOM with new positions
+//   7. renderThinkingStateLabel() / renderSuggestedNodes()
 // ═══════════════════════════════════════════════════════════════
 function applyPatch(patch, rawTranscript, inputType) {
   const session   = createSession(inputType, rawTranscript);
@@ -389,7 +490,7 @@ function applyPatch(patch, rawTranscript, inputType) {
   const positions = clusterPositions(patch.newNodes.length, patch.relationships, fragments);
   const newIds    = [];
 
-  // Add new nodes
+  // ── 1. Add new fragments (data only, DOM built later) ──────
   patch.newNodes.forEach((n, i) => {
     const frag = {
       id:          generateId(),
@@ -409,23 +510,17 @@ function applyPatch(patch, rawTranscript, inputType) {
     fragments.push(frag);
     session.fragmentIds.push(frag.id);
     newIds.push(frag.id);
-    buildNode(frag);
   });
 
-  // Apply edited nodes
+  // ── 2. Apply edited nodes ──────────────────────────────────
   patch.editedNodes.forEach(e => {
     const frag = fragments.find(f => f.id === e.id);
     if (!frag) return;
     if (e.label)   frag.title   = e.label;
     if (e.content) frag.content = e.content;
-    const nodeEl = document.querySelector(`.node[data-id="${e.id}"]`);
-    if (nodeEl) {
-      const titleEl = nodeEl.querySelector('.node-title');
-      if (titleEl) titleEl.textContent = frag.title;
-    }
   });
 
-  // Apply relationships — resolve new:<index> refs
+  // ── 3. Apply relationships — resolve new:<index> refs ─────
   function resolveId(ref) {
     if (typeof ref === 'string' && ref.startsWith('new:')) {
       const idx = parseInt(ref.slice(4), 10);
@@ -445,11 +540,47 @@ function applyPatch(patch, rawTranscript, inputType) {
     fromFrag.connections.push({ to: toId, type: r.type });
   });
 
+  // ── 4. Analyze graph + classify thinking state ────────────
+  // Classification runs locally from graph structure — no API call needed.
+  // This determines layout and particle behavior for the current session.
+  const allRels      = getAllRelationships(fragments);
+  const metrics      = analyzeGraph(fragments, allRels, sessions);
+  const classification = classifyThinkingState(metrics);
+
+  // ── 5. Semantic layout — reposition ALL nodes by state ────
+  const positioned = applySemanticLayout(
+    fragments,
+    allRels,
+    classification,
+    { width: window.innerWidth, height: window.innerHeight }
+  );
+  positioned.forEach(({ id, x, y }) => {
+    const frag = fragments.find(f => f.id === id);
+    if (frag) { frag.x = x; frag.y = y; }
+  });
+
+  // ── 6. Update particle mode based on thinking state ───────
+  if (typeof LAYOUT_PRESETS !== 'undefined' && typeof setParticleMode === 'function') {
+    const preset = LAYOUT_PRESETS[classification.state];
+    if (preset) setParticleMode(preset.particleMode);
+  }
+
+  // ── 7. Rebuild DOM, save, refresh ─────────────────────────
+  if (typeof rebuildAllNodes === 'function') rebuildAllNodes();
+
   saveFragments();
   saveSessions();
   if (typeof refreshFilterOptions === 'function') refreshFilterOptions();
   buildAllPaths();
   updateHint();
+
+  // ── 8. Render state label + suggested nodes ───────────────
+  if (typeof renderThinkingStateLabel === 'function') {
+    renderThinkingStateLabel(classification);
+  }
+  if (typeof renderSuggestedNodes === 'function') {
+    renderSuggestedNodes(patch.suggestedNodes || []);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -485,11 +616,58 @@ async function extractAndInject(rawTranscript, inputType) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// LIVE TRANSCRIPT OVERLAY
+// ═══════════════════════════════════════════════════════════════
+function showOverlay() {
+  const overlay  = document.getElementById('voice-transcript-overlay');
+  const text     = document.getElementById('voice-transcript-text');
+  const controls = document.getElementById('vto-controls');
+  if (!overlay || !text) return;
+  text.innerHTML = '';
+  text.contentEditable = 'false';
+  overlay.classList.remove('reviewing');
+  if (controls) controls.classList.remove('visible');
+  overlay.classList.add('active');
+}
+
+function hideOverlay() {
+  const overlay = document.getElementById('voice-transcript-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('active');
+  setTimeout(() => {
+    const text     = document.getElementById('voice-transcript-text');
+    const controls = document.getElementById('vto-controls');
+    if (text)     { text.innerHTML = ''; text.contentEditable = 'false'; }
+    if (controls) controls.classList.remove('visible');
+    overlay.classList.remove('reviewing');
+  }, 300);
+}
+
+function dismissVoiceOverlay() {
+  currentTranscript = '';
+  hideOverlay();
+  clearInputStatus();
+}
+
+function appendTranscriptChunk(chunk) {
+  const container = document.getElementById('voice-transcript-text');
+  if (!container || !chunk.trim()) return;
+  const span = document.createElement('span');
+  span.className = 'transcript-chunk';
+  span.textContent = chunk + ' ';
+  container.appendChild(span);
+  requestAnimationFrame(() => {
+    setTimeout(() => span.classList.add('reveal'), 16);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // VOICE CAPTURE
 // ═══════════════════════════════════════════════════════════════
-let recognition     = null;
-let voiceActive     = false;
-let voiceFinalText  = '';
+let recognition       = null;
+let voiceActive       = false;
+let voiceFinalText    = '';
+let currentTranscript = '';
 
 function startVoice() {
   if (voiceActive) return;
@@ -504,6 +682,7 @@ function startVoice() {
   voiceActive    = true;
   document.getElementById('voice-btn')?.classList.add('recording');
   showInputStatus('listening...');
+  showOverlay();
 
   recognition                  = new SpeechRecognition();
   recognition.continuous       = true;
@@ -514,7 +693,7 @@ function startVoice() {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) voiceFinalText += t + ' ';
+      if (e.results[i].isFinal) { voiceFinalText += t + ' '; appendTranscriptChunk(t); }
       else interim += t;
     }
     const preview = (voiceFinalText + interim).slice(-60);
@@ -554,14 +733,23 @@ function stopVoice() {
     recognition = null;
   }
 
-  const transcript = voiceFinalText.trim();
-  voiceFinalText   = '';
+  currentTranscript = voiceFinalText.trim();
+  voiceFinalText    = '';
 
-  if (transcript) {
-    extractAndInject(transcript, 'voice');
-  } else {
+  if (!currentTranscript) {
+    hideOverlay();
     clearInputStatus();
+    return;
   }
+
+  // Switch overlay to review mode — keep text visible, enable editing
+  const overlay  = document.getElementById('voice-transcript-overlay');
+  const textEl   = document.getElementById('voice-transcript-text');
+  const controls = document.getElementById('vto-controls');
+  overlay?.classList.add('reviewing');
+  if (textEl)   textEl.contentEditable = 'true';
+  if (controls) controls.classList.add('visible');
+  showInputStatus('review transcript — send or cancel');
 }
 
 function toggleVoice() {
@@ -602,6 +790,15 @@ async function submitTextDump() {
   document.getElementById('voice-btn')
     ?.addEventListener('click', toggleVoice);
 
+  document.getElementById('vto-send')?.addEventListener('click', () => {
+    const textEl = document.getElementById('voice-transcript-text');
+    const text   = (textEl?.textContent || currentTranscript).trim();
+    dismissVoiceOverlay();
+    if (text) extractAndInject(text, 'voice');
+  });
+
+  document.getElementById('vto-cancel')?.addEventListener('click', dismissVoiceOverlay);
+
   document.getElementById('dump-btn')
     ?.addEventListener('click', openTextDump);
 
@@ -638,17 +835,31 @@ async function submitTextDump() {
         document.getElementById('transcript-overlay').classList.remove('open');
     });
 
+  document.getElementById('transcripts-btn')
+    ?.addEventListener('click', openTranscriptPanel);
+
+  document.getElementById('tp-close')
+    ?.addEventListener('click', closeTranscriptPanel);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeTranscriptPanel();
+  });
+
   document.getElementById('patch-accept')
     ?.addEventListener('click', () => {
       if (!pendingPatch) return;
-      applyPatch(pendingPatch, pendingPatchRaw, pendingPatchInputType);
+      const committed = reviewFragments.filter(Boolean);
+      const updatedPatch = { ...pendingPatch, newNodes: committed };
+      applyPatch(updatedPatch, pendingPatchRaw, pendingPatchInputType);
       pendingPatch = null; pendingPatchRaw = ''; pendingPatchInputType = '';
+      reviewFragments = [];
       document.getElementById('patch-overlay')?.classList.remove('open');
     });
 
   document.getElementById('patch-cancel')
     ?.addEventListener('click', () => {
       pendingPatch = null; pendingPatchRaw = ''; pendingPatchInputType = '';
+      reviewFragments = [];
       document.getElementById('patch-overlay')?.classList.remove('open');
     });
 
@@ -656,6 +867,7 @@ async function submitTextDump() {
     ?.addEventListener('click', (e) => {
       if (e.target === document.getElementById('patch-overlay')) {
         pendingPatch = null; pendingPatchRaw = ''; pendingPatchInputType = '';
+        reviewFragments = [];
         document.getElementById('patch-overlay').classList.remove('open');
       }
     });

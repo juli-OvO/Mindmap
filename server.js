@@ -135,9 +135,52 @@ function isPatchShape(value) {
 
 // ── system prompt (always included) ─────────────────────────────
 const SYSTEM_PROMPT =
-`You are a synthesis engine for a designer's research fragments.
-Surface what the designer is actually circling, even if unnamed.
-Use exact words from their fragments. Do not introduce new concepts.`;
+`You are analyzing a personal thinking graph.
+
+Your task is to produce a WORKING SYNTHESIS.
+
+Do NOT write a polished artist statement.
+Do NOT exaggerate clarity.
+Do NOT be poetic or metaphor-heavy.
+
+Stay grounded in the actual nodes.
+
+Your goal:
+Help the user see structure in their thinking.
+
+Output format:
+
+Working center:
+1–2 sentences describing what the user seems to be circling.
+
+Patterns:
+- recurring idea or theme
+- repeated structure or behavior
+- notable cluster or grouping
+
+Tensions:
+- contradiction
+- unresolved conflict
+- competing directions
+
+Gaps:
+- what is missing or underdeveloped
+- what is implied but not stated
+
+Next moves:
+- 2–3 concrete actions (reword, connect, test, remove, expand)
+
+Confidence:
+low / medium / high
+
+Why:
+one sentence explaining confidence level
+
+Rules:
+- Use plain language
+- Be specific
+- Do not generalize beyond evidence
+- Do not introduce new concepts not present in the nodes`;
 
 // ── POST /api/synthesize ─────────────────────────────────────────
 app.post('/api/synthesize', (req, res) => {
@@ -159,7 +202,7 @@ app.post('/api/synthesize', (req, res) => {
       `I have ${fragments.length} research fragment${fragments.length !== 1 ? 's' : ''}.\n` +
       `Top keywords by weight: ${kwStr || 'none'}.` +
       `\nWhat am I circling?`;
-    maxTokens = 200;
+    maxTokens = 600;
 
   } else if (trigger === 'give me the concept') {
     // all confirmed keywords + connections
@@ -181,7 +224,7 @@ app.post('/api/synthesize', (req, res) => {
       `Type: ${f.type || ''}\n` +
       `Tags: ${(f.tags || []).join(', ') || 'none'}\n\n` +
       `Push back on this.`;
-    maxTokens = 200;
+    maxTokens = 500;
 
   } else {
     return res.status(400).json({ error: `Unknown trigger: ${trigger}` });
@@ -377,6 +420,7 @@ Your job:
 * keptNodes: existing node ids confirmed or echoed without change
 * relationships: connections implied by the transcript
 * topTags: the 5 most important semantic tags across the whole new session
+* suggestedNodes: exactly 3 possible nodes the thinker hasn't articulated yet
 
 Rules for labels:
 * 2–4 words, close to the speaker's wording
@@ -395,6 +439,15 @@ Rules for relationships:
   - or "new:<index>" where index is the 0-based position in the newNodes array (e.g. "new:0", "new:1")
 * Only suggest relationships clearly implied by the text
 
+Rules for suggestedNodes (exactly 3):
+* Label: 2–4 words, specific not generic
+* Based on unresolved gaps: isolated nodes, unresolved contradictions, long chains, repeated themes
+* suggestionType: one of "bridge", "next_step", "question", "tension", "return"
+* basedOn: array of 1–2 node ids or "new:N" refs the suggestion relates to
+* confidence: 0.0–1.0
+* Good labels: "missing bridge", "unspoken fear", "next material test", "old pattern"
+* Bad labels: "explore this more", "creative idea", "you should consider"
+
 Return ONLY raw JSON.
 Do not use markdown fences.
 Do not include explanatory text before or after the JSON.
@@ -412,7 +465,19 @@ Output schema:
   "relationships": [
     { "from": "id-or-new:0", "to": "id-or-new:1", "type": "contradicts|leads_to|parallel" }
   ],
-  "topTags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
+  "topTags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "suggestedNodes": [
+    {
+      "id": "suggestion_1",
+      "label": "...",
+      "reason": "...",
+      "suggestionType": "bridge|next_step|question|tension|return",
+      "basedOn": ["id-or-new:0"],
+      "confidence": 0.72,
+      "isSuggestion": true,
+      "status": "floating"
+    }
+  ]
 }`;
 
 app.post('/api/patch', (req, res) => {
@@ -510,11 +575,19 @@ app.post('/api/patch', (req, res) => {
       const relationships = patch.relationships
         .filter(r => r && r.from && r.to && VALID_REL.has(r.type));
 
+      // suggestedNodes is optional — pass through if present, else empty array
+      const VALID_SUG_TYPE = new Set(['bridge', 'next_step', 'question', 'tension', 'return']);
+      const suggestedNodes = Array.isArray(patch.suggestedNodes)
+        ? patch.suggestedNodes
+            .filter(s => s && s.id && s.label && VALID_SUG_TYPE.has(s.suggestionType))
+            .slice(0, 3)
+        : [];
+
       if (!newNodes.length && !editedNodes.length && !keptNodes.length) {
         return res.status(422).json({ error: 'empty patch' });
       }
 
-      res.json({ patch: { newNodes, editedNodes, keptNodes, relationships, topTags } });
+      res.json({ patch: { newNodes, editedNodes, keptNodes, relationships, topTags, suggestedNodes } });
     });
   });
 
@@ -522,6 +595,194 @@ app.post('/api/patch', (req, res) => {
     res.status(500).json({ error: err.message });
   });
 
+  apiReq.write(bodyStr);
+  apiReq.end();
+});
+
+// ── POST /api/suggestDirections ──────────────────────────────────
+const SUGGEST_SYSTEM =
+`You are assisting a thinking graph tool.
+
+Your task is to generate SMALL, ACTIONABLE suggestions based ONLY on the current nodes.
+
+Do NOT summarize the whole project.
+Do NOT write concept statements.
+Do NOT be poetic or abstract.
+
+Focus on helping the user CONTINUE thinking.
+
+Constraints:
+- Use only ideas present in the nodes
+- Do not invent unsupported themes
+- Keep all labels short (2–5 words)
+- Be specific and grounded
+- Prefer usefulness over cleverness
+
+Suggestion types:
+- missing_question → something the user hasn't asked
+- bridge → link between two ideas
+- tension → contradiction or conflict
+- anchor → repeated or central idea
+- clarify → vague or unclear node
+
+Return JSON only.`;
+
+app.post('/api/suggestDirections', (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set in environment' });
+
+  const { nodes } = req.body;
+  if (!Array.isArray(nodes) || !nodes.length) {
+    return res.status(400).json({ error: 'nodes array required' });
+  }
+
+  const nodeStr    = nodes.map(n => `- ${n.label}`).join('\n');
+  const userContent =
+    `Current graph nodes:\n${nodeStr}\n\n` +
+    `Return ONLY raw JSON. No markdown fences. No explanatory text.\n\n` +
+    `{\n` +
+    `  "suggestedNodes": [\n` +
+    `    { "label": "short phrase", "type": "missing_question|bridge|tension|anchor|clarify", "reason": "one concrete sentence" }\n` +
+    `  ],\n` +
+    `  "suggestedRelationships": [\n` +
+    `    { "from": "existing node label", "to": "existing or suggested node label", "relationship": "leads_to|contradicts|parallel", "reason": "one sentence" }\n` +
+    `  ],\n` +
+    `  "critique": [\n` +
+    `    { "issue": "short label", "note": "what is weak or missing", "nextAction": "specific step" }\n` +
+    `  ]\n` +
+    `}\n\n` +
+    `Rules:\n` +
+    `- suggestedNodes MUST contain 2-3 items. An empty array is not acceptable.\n` +
+    `- If you cannot derive suggestions strictly from the nodes, extrapolate one step beyond them.\n` +
+    `- Max 3 suggestedRelationships, max 3 critique items.`;
+
+  const bodyObj = {
+    model:      'claude-sonnet-4-6',
+    max_tokens: 900,
+    system:     SUGGEST_SYSTEM,
+    messages:   [{ role: 'user', content: userContent }],
+  };
+  const bodyStr = JSON.stringify(bodyObj);
+
+  const options = {
+    hostname: 'api.anthropic.com',
+    path:     '/v1/messages',
+    method:   'POST',
+    headers: {
+      'x-api-key':         apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type':      'application/json',
+      'content-length':    Buffer.byteLength(bodyStr),
+    },
+  };
+
+  const apiReq = https.request(options, (apiRes) => {
+    let raw = '';
+    apiRes.on('data', chunk => { raw += chunk; });
+    apiRes.on('end', () => {
+      let parsed;
+      try { parsed = parseAnthropicRaw(raw, 'suggestDirections'); }
+      catch (err) { return res.status(502).json({ error: 'server could not parse Anthropic response' }); }
+
+      if (apiRes.statusCode !== 200) {
+        const msg = parsed.error?.message || `Anthropic API error ${apiRes.statusCode}`;
+        return res.status(apiRes.statusCode).json({ error: msg });
+      }
+
+      const text = (parsed.content || []).find(b => b.type === 'text')?.text || '';
+      console.log('[suggestDirections] model text:', text.slice(0, 600));
+      let obj;
+      try {
+        obj = extractJsonObject(text, v => Array.isArray(v.suggestedNodes)).value;
+      } catch (err) {
+        logModelParseFailure('suggestDirections', text, err.extracted, err);
+        return res.status(502).json({ error: 'invalid suggestions JSON from model' });
+      }
+
+      const suggestedNodes         = (obj.suggestedNodes         || []).slice(0, 3);
+      const suggestedRelationships = (obj.suggestedRelationships || []).slice(0, 3);
+      const critique               = (obj.critique               || []).slice(0, 3);
+
+      res.json({ suggestedNodes, suggestedRelationships, critique });
+    });
+  });
+
+  apiReq.on('error', err => res.status(500).json({ error: err.message }));
+  apiReq.write(bodyStr);
+  apiReq.end();
+});
+
+// ── POST /api/synthesizeConcept ──────────────────────────────────
+app.post('/api/synthesizeConcept', (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set in environment' });
+
+  const { labels } = req.body;
+  if (!Array.isArray(labels) || !labels.length) {
+    return res.status(400).json({ error: 'labels array required' });
+  }
+
+  const userContent =
+    `${JSON.stringify(labels, null, 2)}\n\n` +
+    `Rules:\n` +
+    `- 3-5 sentences\n` +
+    `- stay grounded in given labels\n` +
+    `- do NOT introduce unrelated ideas\n` +
+    `- avoid generic phrases like "this explores..." or "this is about..."\n` +
+    `- prioritize clarity over style\n\n` +
+    `Return ONLY JSON:\n{"concept":"..."}`;
+
+  const CONCEPT_SYSTEM =
+    `You are summarizing a thinking process.\n` +
+    `Given a list of short node labels, produce a concise concept statement.`;
+
+  const bodyObj = {
+    model:      'claude-sonnet-4-6',
+    max_tokens: 250,
+    system:     CONCEPT_SYSTEM,
+    messages:   [{ role: 'user', content: userContent }],
+  };
+  const bodyStr = JSON.stringify(bodyObj);
+
+  const options = {
+    hostname: 'api.anthropic.com',
+    path:     '/v1/messages',
+    method:   'POST',
+    headers: {
+      'x-api-key':         apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type':      'application/json',
+      'content-length':    Buffer.byteLength(bodyStr),
+    },
+  };
+
+  const apiReq = https.request(options, (apiRes) => {
+    let raw = '';
+    apiRes.on('data', chunk => { raw += chunk; });
+    apiRes.on('end', () => {
+      let parsed;
+      try { parsed = parseAnthropicRaw(raw, 'synthesizeConcept'); }
+      catch (err) { return res.status(502).json({ error: 'server could not parse Anthropic response' }); }
+
+      if (apiRes.statusCode !== 200) {
+        const msg = parsed.error?.message || `Anthropic API error ${apiRes.statusCode}`;
+        return res.status(apiRes.statusCode).json({ error: msg });
+      }
+
+      const text = (parsed.content || []).find(b => b.type === 'text')?.text || '';
+      let concept;
+      try {
+        concept = extractJsonObject(text, v => typeof v.concept === 'string').value.concept;
+      } catch (err) {
+        logModelParseFailure('synthesizeConcept', text, err.extracted, err);
+        return res.status(502).json({ error: 'invalid concept JSON from model' });
+      }
+
+      res.json({ concept });
+    });
+  });
+
+  apiReq.on('error', err => res.status(500).json({ error: err.message }));
   apiReq.write(bodyStr);
   apiReq.end();
 });

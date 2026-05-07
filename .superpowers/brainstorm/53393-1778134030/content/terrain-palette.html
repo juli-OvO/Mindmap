@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Palette Options</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #1a1a1a;
+    font-family: 'Georgia', serif;
+    color: #e8e0d0;
+    padding: 32px;
+  }
+  h2 {
+    font-size: 22px;
+    font-weight: normal;
+    letter-spacing: 0.04em;
+    margin-bottom: 8px;
+    color: #f0e8d8;
+  }
+  .subtitle {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 32px;
+    font-style: italic;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 1000px;
+  }
+  .card {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s;
+    background: #111;
+  }
+  .card:hover { transform: translateY(-2px); }
+  .card.selected { border-color: #c8b080; }
+  .card canvas { display: block; width: 100%; height: 200px; }
+  .card-body {
+    padding: 14px 16px;
+    background: #1e1e1e;
+  }
+  .card-body h3 {
+    font-size: 15px;
+    font-weight: normal;
+    letter-spacing: 0.03em;
+    margin-bottom: 4px;
+    color: #e8dcc8;
+  }
+  .card-body p {
+    font-size: 12px;
+    color: #888;
+    line-height: 1.5;
+  }
+  .selection-bar {
+    margin-top: 24px;
+    font-size: 13px;
+    color: #aaa;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<h2>Terrain Color Palette</h2>
+<p class="subtitle">Which atmosphere feels right for the conceptual-density terrain behind your nodes?</p>
+
+<div class="cards">
+
+  <!-- Option A: Warm Earth -->
+  <div class="card" id="card-a" onclick="selectCard('a')">
+    <canvas id="canvas-a" width="460" height="200"></canvas>
+    <div class="card-body">
+      <h3>A — Warm Earth</h3>
+      <p>Muted terracotta, aged parchment, warm cream. Stays in the same warm family as your background (#F3ECDC).</p>
+    </div>
+  </div>
+
+  <!-- Option B: Cool Cartographic -->
+  <div class="card" id="card-b" onclick="selectCard('b')">
+    <canvas id="canvas-b" width="460" height="200"></canvas>
+    <div class="card-body">
+      <h3>B — Cool Cartographic</h3>
+      <p>Pale blue, slate, dusty teal. Topographic map feeling. Creates gentle contrast against the warm background.</p>
+    </div>
+  </div>
+
+  <!-- Option C: Botanical -->
+  <div class="card" id="card-c" onclick="selectCard('c')">
+    <canvas id="canvas-c" width="460" height="200"></canvas>
+    <div class="card-body">
+      <h3>C — Botanical</h3>
+      <p>Sage green, pale moss, warm sage. Like accumulated organic matter or lichen on paper.</p>
+    </div>
+  </div>
+
+  <!-- Option D: Mixed Atmospheric -->
+  <div class="card" id="card-d" onclick="selectCard('d')">
+    <canvas id="canvas-d" width="460" height="200"></canvas>
+    <div class="card-body">
+      <h3>D — Mixed Atmospheric</h3>
+      <p>Shifts from warm beige (low) through pale blue-green (mid) to soft dusty rose (high). Multi-elevation feel.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="selection-bar" id="sel-bar">Click a palette to select it, then reply in the terminal.</div>
+
+<script>
+const BG = '#F3ECDC';
+
+// Noise helper
+function noise2D(x, y) {
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  const fx = x - Math.floor(x), fy = y - Math.floor(y);
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  function h(n) { n = (n ^ (n >> 7)) * 0x45d9f3b; return ((n ^ (n >> 4)) & 0xff) / 255; }
+  return h(X + Y * 57) * (1 - u) * (1 - v) +
+         h(X + 1 + Y * 57) * u * (1 - v) +
+         h(X + (Y + 1) * 57) * (1 - u) * v +
+         h(X + 1 + (Y + 1) * 57) * u * v;
+}
+
+// Fake nodes
+const nodes = [
+  { x: 160, y: 90 },
+  { x: 200, y: 130 },
+  { x: 280, y: 80 },
+  { x: 120, y: 140 },
+  { x: 340, y: 120 },
+  { x: 370, y: 70 },
+];
+
+function getDensity(px, py, nodes) {
+  let d = 0;
+  for (const n of nodes) {
+    const dx = px - n.x, dy = py - n.y;
+    const dist2 = dx * dx + dy * dy;
+    const r2 = 120 * 120;
+    d += Math.exp(-dist2 / r2);
+  }
+  const ns = 0.85 + 0.3 * noise2D(px * 0.014, py * 0.014);
+  return d * ns;
+}
+
+function renderTerrain(canvasId, paletteFn) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+
+  // Fill background
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  const GRID = 10;
+  const thresholds = [0.18, 0.32, 0.48, 0.65, 0.82];
+
+  // Sample grid
+  const cols = Math.ceil(W / GRID) + 1;
+  const rows = Math.ceil(H / GRID) + 1;
+  const field = [];
+  for (let r = 0; r < rows; r++) {
+    field[r] = [];
+    for (let c = 0; c < cols; c++) {
+      field[r][c] = getDensity(c * GRID, r * GRID, nodes);
+    }
+  }
+
+  // Draw contour blobs per threshold
+  for (let ti = thresholds.length - 1; ti >= 0; ti--) {
+    const t = thresholds[ti];
+    const { fill, alpha } = paletteFn(ti, thresholds.length);
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (field[r][c] >= t) {
+          // Use a soft radial gradient cell
+          const px = c * GRID, py = r * GRID;
+          const grd = ctx.createRadialGradient(px, py, 0, px, py, GRID * 1.4);
+          grd.addColorStop(0, fill.replace('ALPHA', (alpha).toFixed(2)));
+          grd.addColorStop(1, fill.replace('ALPHA', '0'));
+          ctx.fillStyle = grd;
+          ctx.beginPath();
+          ctx.arc(px, py, GRID * 1.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  // Draw sample nodes
+  for (const n of nodes) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(80,60,40,0.7)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(200,170,120,0.9)';
+    ctx.fill();
+  }
+}
+
+// Palette A: Warm Earth
+function paletteWarm(ti, total) {
+  const colors = [
+    { r: 210, g: 180, b: 140 }, // warm tan
+    { r: 200, g: 160, b: 115 }, // terracotta light
+    { r: 185, g: 145, b: 100 }, // terracotta
+    { r: 170, g: 125, b: 85 },  // deeper terracotta
+    { r: 155, g: 110, b: 72 },  // rich earth
+  ];
+  const c = colors[ti];
+  const alpha = 0.10 + ti * 0.06;
+  const fill = `rgba(${c.r},${c.g},${c.b},ALPHA)`;
+  return { fill, alpha };
+}
+
+// Palette B: Cool Cartographic
+function paletteCool(ti, total) {
+  const colors = [
+    { r: 180, g: 210, b: 230 }, // lightest blue
+    { r: 150, g: 190, b: 215 }, // pale blue
+    { r: 120, g: 165, b: 200 }, // slate blue
+    { r: 100, g: 145, b: 185 }, // dusty teal
+    { r: 80, g: 125, b: 170 },  // deeper teal
+  ];
+  const c = colors[ti];
+  const alpha = 0.08 + ti * 0.06;
+  const fill = `rgba(${c.r},${c.g},${c.b},ALPHA)`;
+  return { fill, alpha };
+}
+
+// Palette C: Botanical
+function paletteBotanical(ti, total) {
+  const colors = [
+    { r: 180, g: 200, b: 165 }, // pale sage
+    { r: 155, g: 180, b: 140 }, // sage
+    { r: 130, g: 160, b: 115 }, // moss sage
+    { r: 110, g: 140, b: 95 },  // deeper moss
+    { r: 90, g: 120, b: 75 },   // rich moss
+  ];
+  const c = colors[ti];
+  const alpha = 0.09 + ti * 0.06;
+  const fill = `rgba(${c.r},${c.g},${c.b},ALPHA)`;
+  return { fill, alpha };
+}
+
+// Palette D: Mixed Atmospheric
+function paletteMixed(ti, total) {
+  const colors = [
+    { r: 215, g: 200, b: 175 }, // warm beige
+    { r: 170, g: 200, b: 195 }, // cool teal-beige
+    { r: 145, g: 185, b: 185 }, // teal
+    { r: 190, g: 165, b: 175 }, // dusty rose
+    { r: 175, g: 145, b: 155 }, // deeper rose
+  ];
+  const c = colors[ti];
+  const alpha = 0.10 + ti * 0.06;
+  const fill = `rgba(${c.r},${c.g},${c.b},ALPHA)`;
+  return { fill, alpha };
+}
+
+renderTerrain('canvas-a', paletteWarm);
+renderTerrain('canvas-b', paletteCool);
+renderTerrain('canvas-c', paletteBotanical);
+renderTerrain('canvas-d', paletteMixed);
+
+let selected = null;
+function selectCard(id) {
+  if (selected) document.getElementById('card-' + selected).classList.remove('selected');
+  selected = id;
+  document.getElementById('card-' + id).classList.add('selected');
+  const names = { a: 'A — Warm Earth', b: 'B — Cool Cartographic', c: 'C — Botanical', d: 'D — Mixed Atmospheric' };
+  document.getElementById('sel-bar').textContent = 'Selected: ' + names[id] + ' — reply in the terminal to confirm.';
+}
+</script>
+</body>
+</html>

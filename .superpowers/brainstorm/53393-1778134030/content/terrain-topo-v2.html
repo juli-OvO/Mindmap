@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Topo v2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a1a; font-family: 'Georgia', serif; color: #e8e0d0; padding: 28px 32px 48px; }
+  h2 { font-size: 20px; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 6px; color: #f0e8d8; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; font-style: italic; max-width: 700px; line-height: 1.6; }
+  .card {
+    border-radius: 10px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer;
+    transition: border-color 0.2s; background: #111;
+    margin-bottom: 20px; max-width: 920px;
+  }
+  .card:hover { border-color: #555; }
+  .card.selected { border-color: #a8c890; }
+  .card canvas { display: block; width: 100%; }
+  .card-body { padding: 13px 18px; background: #1e1e1e; display: flex; gap: 20px; align-items: flex-start; }
+  .card-label { font-size: 14px; color: #e0d5c0; white-space: nowrap; min-width: 230px; }
+  .card-body p { font-size: 12px; color: #777; line-height: 1.6; }
+  .sel-bar { margin-top: 6px; font-size: 13px; color: #aaa; font-style: italic; }
+</style>
+</head>
+<body>
+<h2>Terrain — Topo v2</h2>
+<p class="subtitle">No ctx.filter — pure canvas 2D. Left side = tight cluster, right side = sparse nodes. Radius 85px. Multi-octave noise.</p>
+
+<div class="card" id="card-v1" onclick="sel('v1')">
+  <canvas id="cv-v1" width="900" height="230"></canvas>
+  <div class="card-body">
+    <span class="card-label">V1 — Soft fills + contour lines</span>
+    <p>Radial gradient blobs stacked per band (innermost darkest), then marching-squares contour strokes on top. 3-octave noise strength 0.45.</p>
+  </div>
+</div>
+
+<div class="card" id="card-v2" onclick="sel('v2')">
+  <canvas id="cv-v2" width="900" height="230"></canvas>
+  <div class="card-body">
+    <span class="card-label">V2 — Lines only, strong noise</span>
+    <p>Contour strokes only, no fill. Shows the serpentine noise twisting most clearly. Inner lines thicker and darker.</p>
+  </div>
+</div>
+
+<div class="card" id="card-v3" onclick="sel('v3')">
+  <canvas id="cv-v3" width="900" height="230"></canvas>
+  <div class="card-body">
+    <span class="card-label">V3 — Soft fills + contour lines, gentle noise</span>
+    <p>Same as V1 but noise scaled back (2 octaves, strength 0.22). Rounder, more geological survey feel.</p>
+  </div>
+</div>
+
+<div class="sel-bar" id="sel-bar">Click a variant, then reply in terminal.</div>
+
+<script>
+const BG = '#F3ECDC';
+
+// ── value noise ──────────────────────────────────────────────────────────────
+function vn(x, y) {
+  function h(n) { n=(n^(n>>7))*0x45d9f3b; return ((n^(n>>4))&0xff)/255; }
+  const X=Math.floor(x)&255, Y=Math.floor(y)&255;
+  const fx=x-Math.floor(x), fy=y-Math.floor(y);
+  const u=fx*fx*(3-2*fx), v=fy*fy*(3-2*fy);
+  return h(X+Y*57)*(1-u)*(1-v)+h(X+1+Y*57)*u*(1-v)+
+         h(X+(Y+1)*57)*(1-u)*v+h(X+1+(Y+1)*57)*u*v;
+}
+function fbm(x, y, oct) {
+  let val=0,amp=0.5,freq=1,sum=0;
+  for(let i=0;i<oct;i++){val+=vn(x*freq,y*freq)*amp;sum+=amp;amp*=0.5;freq*=2.1;}
+  return val/sum;
+}
+
+// ── nodes ────────────────────────────────────────────────────────────────────
+const NL=[{x:155,y:100},{x:190,y:128},{x:205,y:90},{x:162,y:148},{x:215,y:148},{x:228,y:105},{x:140,y:128}];
+const NR=[{x:490,y:80},{x:590,y:138},{x:665,y:90},{x:540,y:172},{x:700,y:162},{x:760,y:105}];
+const ALL=[...NL,...NR];
+
+// ── density ──────────────────────────────────────────────────────────────────
+function density(px, py, nodes, R, ns, nst, oct) {
+  let d=0;
+  for(const n of nodes){const dx=px-n.x,dy=py-n.y;d+=Math.exp(-(dx*dx+dy*dy)/(R*R));}
+  const noise=fbm(px*ns,py*ns,oct);
+  return d*((1-nst)+nst*2*noise);
+}
+
+// ── build field ───────────────────────────────────────────────────────────────
+function buildField(W,H,G,nodes,R,ns,nst,oct){
+  const cols=Math.ceil(W/G)+2,rows=Math.ceil(H/G)+2;
+  const f=new Float32Array(cols*rows);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) f[r*cols+c]=density(c*G,r*G,nodes,R,ns,nst,oct);
+  return {f,cols,rows};
+}
+
+// ── draw soft fill band (radial gradients, no ctx.filter) ────────────────────
+function drawFillBand(ctx, f, cols, rows, G, threshold, r, g, b, a) {
+  for(let row=0;row<rows;row++){
+    for(let col=0;col<cols;col++){
+      if(f[row*cols+col]>=threshold){
+        const px=col*G, py=row*G;
+        const grad=ctx.createRadialGradient(px,py,0,px,py,G*1.6);
+        grad.addColorStop(0,`rgba(${r},${g},${b},${a})`);
+        grad.addColorStop(1,`rgba(${r},${g},${b},0)`);
+        ctx.fillStyle=grad;
+        ctx.beginPath();ctx.arc(px,py,G*1.4,0,Math.PI*2);ctx.fill();
+      }
+    }
+  }
+}
+
+// ── marching squares ──────────────────────────────────────────────────────────
+function marchLines(ctx, f, cols, rows, G, threshold, color, lw){
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function ei(v0,v1,t){return Math.abs(v1-v0)<1e-4?0.5:Math.max(0,Math.min(1,(t-v0)/(v1-v0)));}
+  ctx.strokeStyle=color; ctx.lineWidth=lw; ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.beginPath();
+  for(let r=0;r<rows-1;r++) for(let c=0;c<cols-1;c++){
+    const v00=f[r*cols+c],v10=f[r*cols+c+1],v01=f[(r+1)*cols+c],v11=f[(r+1)*cols+c+1];
+    const x0=c*G,y0=r*G;
+    const b00=v00>=threshold?1:0,b10=v10>=threshold?1:0,b01=v01>=threshold?1:0,b11=v11>=threshold?1:0;
+    const idx=b00|b10<<1|b11<<2|b01<<3;
+    if(idx===0||idx===15) continue;
+    const top=[x0+lerp(0,G,ei(v00,v10,threshold)),y0];
+    const rgt=[x0+G,y0+lerp(0,G,ei(v10,v11,threshold))];
+    const bot=[x0+lerp(0,G,ei(v01,v11,threshold)),y0+G];
+    const lft=[x0,y0+lerp(0,G,ei(v00,v01,threshold))];
+    const map={1:[lft,top],2:[top,rgt],3:[lft,rgt],4:[rgt,bot],6:[top,bot],
+               7:[lft,bot],8:[bot,lft],9:[bot,top],11:[bot,rgt],
+               12:[rgt,lft],13:[rgt,top],14:[lft,top]};
+    const pairs=idx===5?[[lft,top],[rgt,bot]]:idx===10?[[top,rgt],[bot,lft]]:(map[idx]?[map[idx]]:null);
+    if(!pairs) continue;
+    for(const s of pairs){ctx.moveTo(s[0][0],s[0][1]);ctx.lineTo(s[1][0],s[1][1]);}
+  }
+  ctx.stroke();
+}
+
+function drawNodes(ctx,nodes){
+  for(const n of nodes){
+    ctx.beginPath();ctx.arc(n.x,n.y,5,0,Math.PI*2);ctx.fillStyle='rgba(65,50,30,0.7)';ctx.fill();
+    ctx.beginPath();ctx.arc(n.x,n.y,3,0,Math.PI*2);ctx.fillStyle='rgba(215,188,132,0.92)';ctx.fill();
+  }
+}
+
+function labelPanels(ctx, W, H){
+  ctx.strokeStyle='rgba(120,100,80,0.15)'; ctx.lineWidth=1;
+  ctx.setLineDash([4,5]); ctx.beginPath(); ctx.moveTo(W/2,14); ctx.lineTo(W/2,H-14); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='rgba(100,80,60,0.30)'; ctx.font='italic 10px Georgia';
+  ctx.fillText('cluster', 110, 18); ctx.fillText('sparse', W*0.72, 18);
+}
+
+// ── band definitions ─────────────────────────────────────────────────────────
+const BANDS = [
+  {t:0.08, r:200,g:213,b:186, a:0.09, lc:'rgba(160,178,140,0.28)', lw:0.5},
+  {t:0.20, r:178,g:200,b:160, a:0.13, lc:'rgba(138,162,112,0.36)', lw:0.65},
+  {t:0.36, r:155,g:182,b:135, a:0.17, lc:'rgba(115,148,88,0.44)',  lw:0.80},
+  {t:0.55, r:130,g:160,b:108, a:0.22, lc:'rgba(92,130,68,0.52)',   lw:0.95},
+  {t:0.76, r:106,g:138,b:84,  a:0.27, lc:'rgba(72,112,50,0.58)',   lw:1.10},
+  {t:1.00, r:84, g:116,b:62,  a:0.33, lc:'rgba(52,92,34,0.65)',    lw:1.25},
+];
+
+// ── renders ──────────────────────────────────────────────────────────────────
+function renderV1(){
+  const cv=document.getElementById('cv-v1'),ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,G=9;
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  labelPanels(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,G,ALL,85,0.018,0.45,3);
+  // fills: outer first (so inner paints over)
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];drawFillBand(ctx,f,cols,rows,G,b.t,b.r,b.g,b.b,b.a);}
+  // lines: all thresholds
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];marchLines(ctx,f,cols,rows,G,b.t,b.lc,b.lw);}
+  drawNodes(ctx,ALL);
+}
+
+function renderV2(){
+  const cv=document.getElementById('cv-v2'),ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,G=7;
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  labelPanels(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,G,ALL,85,0.018,0.45,3);
+  for(let i=0;i<BANDS.length;i++){
+    const b=BANDS[i];
+    marchLines(ctx,f,cols,rows,G,b.t,b.lc.replace(/[\d.]+\)$/,`${0.40+i*0.10})`),b.lw+0.15);
+  }
+  drawNodes(ctx,ALL);
+}
+
+function renderV3(){
+  const cv=document.getElementById('cv-v3'),ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,G=9;
+  ctx.fillStyle=BG; ctx.fillRect(0,0,W,H);
+  labelPanels(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,G,ALL,85,0.010,0.22,2);
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];drawFillBand(ctx,f,cols,rows,G,b.t,b.r,b.g,b.b,b.a*0.85);}
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];marchLines(ctx,f,cols,rows,G,b.t,b.lc,b.lw*0.85);}
+  drawNodes(ctx,ALL);
+}
+
+renderV1(); renderV2(); renderV3();
+
+let sel_=null;
+function sel(id){
+  if(sel_) document.getElementById('card-'+sel_).classList.remove('selected');
+  sel_=id; document.getElementById('card-'+id).classList.add('selected');
+  const n={v1:'V1 — Soft fills + lines',v2:'V2 — Lines only',v3:'V3 — Gentle noise'};
+  document.getElementById('sel-bar').textContent='Selected: '+n[id]+' — reply in terminal.';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Botanical Terrain Variants</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #1a1a1a;
+    font-family: 'Georgia', serif;
+    color: #e8e0d0;
+    padding: 32px;
+  }
+  h2 { font-size: 20px; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 6px; color: #f0e8d8; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 28px; font-style: italic; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1020px; }
+  .card {
+    border-radius: 10px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s;
+    background: #111;
+  }
+  .card:hover { transform: translateY(-2px); }
+  .card.selected { border-color: #a8c890; }
+  .card canvas { display: block; width: 100%; }
+  .card-body { padding: 12px 16px; background: #1e1e1e; }
+  .card-body h3 { font-size: 14px; font-weight: normal; letter-spacing: 0.03em; margin-bottom: 4px; color: #e8dcc8; }
+  .card-body p { font-size: 12px; color: #777; line-height: 1.5; }
+  .swatches { display: flex; gap: 5px; margin-top: 8px; }
+  .swatch { width: 20px; height: 20px; border-radius: 3px; }
+  .sel-bar { margin-top: 22px; font-size: 13px; color: #aaa; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h2>Botanical Terrain — Variants</h2>
+<p class="subtitle">All against your app background (#F3ECDC). Dots = nodes. Which intensity and tone feels right?</p>
+
+<div class="cards">
+  <div class="card" id="card-c1" onclick="selectCard('c1')">
+    <canvas id="cv-c1" width="460" height="220"></canvas>
+    <div class="card-body">
+      <h3>C1 — Muted Sage (very subtle)</h3>
+      <p>Extremely soft — barely-there impression. Only shows at dense clusters.</p>
+      <div class="swatches">
+        <div class="swatch" style="background:rgba(180,200,165,0.10)"></div>
+        <div class="swatch" style="background:rgba(155,180,140,0.16)"></div>
+        <div class="swatch" style="background:rgba(130,160,115,0.22)"></div>
+        <div class="swatch" style="background:rgba(110,140,95,0.28)"></div>
+        <div class="swatch" style="background:rgba(90,120,75,0.34)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="card-c2" onclick="selectCard('c2')">
+    <canvas id="cv-c2" width="460" height="220"></canvas>
+    <div class="card-body">
+      <h3>C2 — Warm Sage (original proposal)</h3>
+      <p>The palette from the previous section. Medium presence, readable terrain shape.</p>
+      <div class="swatches">
+        <div class="swatch" style="background:rgba(180,200,165,0.14)"></div>
+        <div class="swatch" style="background:rgba(155,180,140,0.20)"></div>
+        <div class="swatch" style="background:rgba(130,160,115,0.26)"></div>
+        <div class="swatch" style="background:rgba(110,140,95,0.32)"></div>
+        <div class="swatch" style="background:rgba(90,120,75,0.38)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="card-c3" onclick="selectCard('c3')">
+    <canvas id="cv-c3" width="460" height="220"></canvas>
+    <div class="card-body">
+      <h3>C3 — Cooler Moss (blue-green tinge)</h3>
+      <p>Shifts sage toward dusty teal-green. More cartographic, cooler against the warm background.</p>
+      <div class="swatches">
+        <div class="swatch" style="background:rgba(165,195,185,0.14)"></div>
+        <div class="swatch" style="background:rgba(140,175,165,0.20)"></div>
+        <div class="swatch" style="background:rgba(115,155,145,0.26)"></div>
+        <div class="swatch" style="background:rgba(95,135,125,0.32)"></div>
+        <div class="swatch" style="background:rgba(75,115,105,0.38)"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="card-c4" onclick="selectCard('c4')">
+    <canvas id="cv-c4" width="460" height="220"></canvas>
+    <div class="card-body">
+      <h3>C4 — Deep Forest (more saturated)</h3>
+      <p>Richer, more present greens. Stronger visual contrast. Accumulated thought feels denser.</p>
+      <div class="swatches">
+        <div class="swatch" style="background:rgba(160,190,135,0.16)"></div>
+        <div class="swatch" style="background:rgba(130,165,105,0.22)"></div>
+        <div class="swatch" style="background:rgba(105,145,80,0.28)"></div>
+        <div class="swatch" style="background:rgba(80,120,60,0.35)"></div>
+        <div class="swatch" style="background:rgba(60,100,42,0.42)"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sel-bar" id="sel-bar">Click a variant to select, then reply in the terminal.</div>
+
+<script>
+const BG = '#F3ECDC';
+
+function noise2D(x, y) {
+  function h(n) {
+    n = (n ^ (n >> 7)) * 0x45d9f3b;
+    return ((n ^ (n >> 4)) & 0xff) / 255;
+  }
+  const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+  const fx = x - Math.floor(x), fy = y - Math.floor(y);
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+  return h(X + Y * 57) * (1-u)*(1-v) + h(X+1+Y*57)*u*(1-v) +
+         h(X+(Y+1)*57)*(1-u)*v + h(X+1+(Y+1)*57)*u*v;
+}
+
+const nodes = [
+  { x: 150, y: 95 }, { x: 195, y: 130 }, { x: 255, y: 80 },
+  { x: 115, y: 145 }, { x: 315, y: 115 }, { x: 350, y: 72 },
+  { x: 230, y: 160 }, { x: 390, y: 140 },
+];
+
+function getDensity(px, py) {
+  let d = 0;
+  for (const n of nodes) {
+    const dx = px - n.x, dy = py - n.y;
+    d += Math.exp(-(dx*dx + dy*dy) / (130*130));
+  }
+  return d * (0.85 + 0.3 * noise2D(px * 0.008, py * 0.008));
+}
+
+function renderVariant(canvasId, palette) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+
+  const GRID = 10;
+  const cols = Math.ceil(W / GRID) + 1;
+  const rows = Math.ceil(H / GRID) + 1;
+
+  // Build field
+  const field = new Float32Array(cols * rows);
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++)
+      field[r * cols + c] = getDensity(c * GRID, r * GRID);
+
+  ctx.save();
+  ctx.filter = 'blur(5px)';
+
+  for (let ti = palette.length - 1; ti >= 0; ti--) {
+    const { t, r, g, b, a } = palette[ti];
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        if (field[row * cols + col] >= t) {
+          const px = col * GRID, py = row * GRID;
+          const grd = ctx.createRadialGradient(px, py, 0, px, py, GRID * 1.5);
+          grd.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+          grd.addColorStop(1, `rgba(${r},${g},${b},0)`);
+          ctx.fillStyle = grd;
+          ctx.beginPath();
+          ctx.arc(px, py, GRID * 1.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  ctx.restore();
+
+  // Draw nodes
+  for (const n of nodes) {
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(70,55,35,0.75)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(210,185,130,0.95)';
+    ctx.fill();
+  }
+}
+
+const palettes = {
+  c1: [
+    { t:0.18, r:180, g:200, b:165, a:0.10 },
+    { t:0.32, r:155, g:180, b:140, a:0.16 },
+    { t:0.48, r:130, g:160, b:115, a:0.22 },
+    { t:0.65, r:110, g:140, b:95,  a:0.28 },
+    { t:0.82, r:90,  g:120, b:75,  a:0.34 },
+  ],
+  c2: [
+    { t:0.18, r:180, g:200, b:165, a:0.14 },
+    { t:0.32, r:155, g:180, b:140, a:0.20 },
+    { t:0.48, r:130, g:160, b:115, a:0.26 },
+    { t:0.65, r:110, g:140, b:95,  a:0.32 },
+    { t:0.82, r:90,  g:120, b:75,  a:0.38 },
+  ],
+  c3: [
+    { t:0.18, r:165, g:195, b:185, a:0.14 },
+    { t:0.32, r:140, g:175, b:165, a:0.20 },
+    { t:0.48, r:115, g:155, b:145, a:0.26 },
+    { t:0.65, r:95,  g:135, b:125, a:0.32 },
+    { t:0.82, r:75,  g:115, b:105, a:0.38 },
+  ],
+  c4: [
+    { t:0.18, r:160, g:190, b:135, a:0.16 },
+    { t:0.32, r:130, g:165, b:105, a:0.22 },
+    { t:0.48, r:105, g:145, b:80,  a:0.28 },
+    { t:0.65, r:80,  g:120, b:60,  a:0.35 },
+    { t:0.82, r:60,  g:100, b:42,  a:0.42 },
+  ],
+};
+
+renderVariant('cv-c1', palettes.c1);
+renderVariant('cv-c2', palettes.c2);
+renderVariant('cv-c3', palettes.c3);
+renderVariant('cv-c4', palettes.c4);
+
+let selected = null;
+function selectCard(id) {
+  if (selected) document.getElementById('card-' + selected).classList.remove('selected');
+  selected = id;
+  document.getElementById('card-' + id).classList.add('selected');
+  const names = { c1:'C1 — Muted Sage', c2:'C2 — Warm Sage', c3:'C3 — Cooler Moss', c4:'C4 — Deep Forest' };
+  document.getElementById('sel-bar').textContent = 'Selected: ' + names[id] + ' — reply in terminal to confirm.';
+}
+</script>
+</body>
+</html>

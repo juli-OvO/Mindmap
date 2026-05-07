@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Border Mechanisms</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a1a; font-family: 'Georgia', serif; color: #e8e0d0; padding: 28px; }
+  h2 { font-size: 20px; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 6px; color: #f0e8d8; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; font-style: italic; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; max-width: 1060px; }
+  .card {
+    border-radius: 10px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer;
+    transition: border-color 0.2s, transform 0.15s; background: #111;
+  }
+  .card:hover { transform: translateY(-2px); }
+  .card.selected { border-color: #a8c890; }
+  .card canvas { display: block; width: 100%; }
+  .card-body { padding: 12px 16px; background: #1e1e1e; }
+  .card-body h3 { font-size: 14px; font-weight: normal; letter-spacing: 0.03em; margin-bottom: 4px; color: #e8dcc8; }
+  .card-body p { font-size: 12px; color: #777; line-height: 1.5; }
+  .sel-bar { margin-top: 20px; font-size: 13px; color: #aaa; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h2>Terrain Border Mechanisms</h2>
+<p class="subtitle">How contour edges are drawn. Same node cluster, same palette — different border/rendering approach.</p>
+
+<div class="cards">
+
+  <!-- A: Soft blob (current design) -->
+  <div class="card" id="card-a" onclick="selectCard('a')">
+    <canvas id="cv-a" width="490" height="240"></canvas>
+    <div class="card-body">
+      <h3>A — Soft Blob (current design)</h3>
+      <p>Radial gradient arcs + ctx.filter blur. Borders dissolve organically. No hard edges anywhere.</p>
+    </div>
+  </div>
+
+  <!-- B: Topo contour lines -->
+  <div class="card" id="card-b" onclick="selectCard('b')">
+    <canvas id="cv-b" width="490" height="240"></canvas>
+    <div class="card-body">
+      <h3>B — Topographic Contour Lines</h3>
+      <p>Thin strokes traced at each density threshold using marching squares. No fill — pure line drawing. Feels like a surveyor's map.</p>
+    </div>
+  </div>
+
+  <!-- C: Filled bands + contour lines -->
+  <div class="card" id="card-c" onclick="selectCard('c')">
+    <canvas id="cv-c" width="490" height="240"></canvas>
+    <div class="card-body">
+      <h3>C — Filled Bands + Hairline Contours</h3>
+      <p>Soft filled regions (like A) with thin contour strokes drawn on top at each threshold. Layered depth — blob fill + topo lines.</p>
+    </div>
+  </div>
+
+  <!-- D: Glowing inner radiance -->
+  <div class="card" id="card-d" onclick="selectCard('d')">
+    <canvas id="cv-d" width="490" height="240"></canvas>
+    <div class="card-body">
+      <h3>D — Inner Radiance (no border)</h3>
+      <p>Single large radial gradient per node cluster — no discrete bands. Continuous light bloom from center. Most ambient, least structured.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="sel-bar" id="sel-bar">Click a variant to select, then reply in the terminal.</div>
+
+<script>
+const BG = '#F3ECDC';
+const PALETTE = [
+  { t:0.18, r:180, g:200, b:165, a:0.14 },
+  { t:0.32, r:155, g:180, b:140, a:0.20 },
+  { t:0.48, r:130, g:160, b:115, a:0.26 },
+  { t:0.65, r:110, g:140, b:95,  a:0.32 },
+  { t:0.82, r:90,  g:120, b:75,  a:0.38 },
+];
+
+function noise2D(x, y) {
+  function h(n) { n=(n^(n>>7))*0x45d9f3b; return ((n^(n>>4))&0xff)/255; }
+  const X=Math.floor(x)&255, Y=Math.floor(y)&255;
+  const fx=x-Math.floor(x), fy=y-Math.floor(y);
+  const u=fx*fx*(3-2*fx), v=fy*fy*(3-2*fy);
+  return h(X+Y*57)*(1-u)*(1-v)+h(X+1+Y*57)*u*(1-v)+h(X+(Y+1)*57)*(1-u)*v+h(X+1+(Y+1)*57)*u*v;
+}
+
+const nodes = [
+  {x:165,y:100},{x:210,y:140},{x:270,y:88},{x:125,y:150},
+  {x:330,y:120},{x:360,y:78},{x:245,y:170},{x:400,y:145},
+];
+
+function getDensity(px, py) {
+  let d=0;
+  for(const n of nodes){
+    const dx=px-n.x, dy=py-n.y;
+    d+=Math.exp(-(dx*dx+dy*dy)/(145*145));
+  }
+  return d*(0.85+0.3*noise2D(px*0.008,py*0.008));
+}
+
+function drawBg(ctx, W, H) {
+  ctx.fillStyle = BG;
+  ctx.fillRect(0,0,W,H);
+}
+
+function buildField(W, H, GRID) {
+  const cols=Math.ceil(W/GRID)+1, rows=Math.ceil(H/GRID)+1;
+  const f=new Float32Array(cols*rows);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) f[r*cols+c]=getDensity(c*GRID,r*GRID);
+  return {f, cols, rows};
+}
+
+function drawNodes(ctx) {
+  for(const n of nodes){
+    ctx.beginPath(); ctx.arc(n.x,n.y,6,0,Math.PI*2);
+    ctx.fillStyle='rgba(70,55,35,0.7)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(n.x,n.y,3.5,0,Math.PI*2);
+    ctx.fillStyle='rgba(210,185,130,0.95)'; ctx.fill();
+  }
+}
+
+// ---- A: Soft blob ----
+function renderA() {
+  const cv=document.getElementById('cv-a'), ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height, GRID=10;
+  drawBg(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,GRID);
+  ctx.save(); ctx.filter='blur(6px)';
+  for(let ti=PALETTE.length-1;ti>=0;ti--){
+    const p=PALETTE[ti];
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      if(f[r*cols+c]>=p.t){
+        const px=c*GRID, py=r*GRID;
+        const g=ctx.createRadialGradient(px,py,0,px,py,GRID*1.5);
+        g.addColorStop(0,`rgba(${p.r},${p.g},${p.b},${p.a})`);
+        g.addColorStop(1,`rgba(${p.r},${p.g},${p.b},0)`);
+        ctx.fillStyle=g;
+        ctx.beginPath(); ctx.arc(px,py,GRID*1.3,0,Math.PI*2); ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+  drawNodes(ctx);
+}
+
+// ---- B: Marching squares contour lines ----
+function renderB() {
+  const cv=document.getElementById('cv-b'), ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height, GRID=12;
+  drawBg(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,GRID);
+
+  // Marching squares edge table
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function interp(v0,v1,threshold){
+    if(Math.abs(v1-v0)<0.0001) return 0.5;
+    return (threshold-v0)/(v1-v0);
+  }
+
+  for(let ti=0;ti<PALETTE.length;ti++){
+    const p=PALETTE[ti];
+    const t=p.t;
+    // Use progressively thicker + more opaque lines at higher thresholds
+    const lineAlpha=0.25+ti*0.12;
+    const lineWidth=0.6+ti*0.2;
+    ctx.strokeStyle=`rgba(${p.r},${p.g},${p.b},${lineAlpha})`;
+    ctx.lineWidth=lineWidth;
+    ctx.lineJoin='round';
+    ctx.lineCap='round';
+
+    for(let r=0;r<rows-1;r++){
+      for(let c=0;c<cols-1;c++){
+        const v00=f[r*cols+c], v10=f[r*cols+c+1];
+        const v01=f[(r+1)*cols+c], v11=f[(r+1)*cols+c+1];
+        const x0=c*GRID, y0=r*GRID;
+
+        const b00=v00>=t?1:0, b10=v10>=t?1:0;
+        const b01=v01>=t?1:0, b11=v11>=t?1:0;
+        const idx=b00|b10<<1|b11<<2|b01<<3;
+        if(idx===0||idx===15) continue;
+
+        // Edge midpoints
+        const top   =[x0+lerp(0,GRID,interp(v00,v10,t)), y0];
+        const right =[x0+GRID, y0+lerp(0,GRID,interp(v10,v11,t))];
+        const bottom=[x0+lerp(0,GRID,interp(v01,v11,t)), y0+GRID];
+        const left  =[x0, y0+lerp(0,GRID,interp(v00,v01,t))];
+
+        const segments={
+          1:[left,top], 2:[top,right], 3:[left,right],
+          4:[right,bottom], 5:null, 6:[top,bottom],
+          7:[left,bottom], 8:[bottom,left], 9:[bottom,top],
+          10:null, 11:[bottom,right], 12:[right,left],
+          13:[right,top], 14:[left,top],
+        };
+        // Handle ambiguous cases (5,10) simply
+        let seg=segments[idx];
+        if(idx===5){ seg=[[left,top],[right,bottom]]; }
+        else if(idx===10){ seg=[[top,right],[bottom,left]]; }
+
+        if(!seg) continue;
+        if(Array.isArray(seg[0][0])){
+          for(const s of seg){
+            ctx.beginPath(); ctx.moveTo(s[0][0],s[0][1]); ctx.lineTo(s[1][0],s[1][1]); ctx.stroke();
+          }
+        } else {
+          ctx.beginPath(); ctx.moveTo(seg[0][0],seg[0][1]); ctx.lineTo(seg[1][0],seg[1][1]); ctx.stroke();
+        }
+      }
+    }
+  }
+  drawNodes(ctx);
+}
+
+// ---- C: Filled blobs + hairline contours ----
+function renderC() {
+  const cv=document.getElementById('cv-c'), ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height, GRID=10;
+  drawBg(ctx,W,H);
+  const {f,cols,rows}=buildField(W,H,GRID);
+
+  // Draw soft fills first
+  ctx.save(); ctx.filter='blur(5px)';
+  for(let ti=PALETTE.length-1;ti>=0;ti--){
+    const p=PALETTE[ti];
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      if(f[r*cols+c]>=p.t){
+        const px=c*GRID, py=r*GRID;
+        const g=ctx.createRadialGradient(px,py,0,px,py,GRID*1.5);
+        g.addColorStop(0,`rgba(${p.r},${p.g},${p.b},${p.a*0.8})`);
+        g.addColorStop(1,`rgba(${p.r},${p.g},${p.b},0)`);
+        ctx.fillStyle=g;
+        ctx.beginPath(); ctx.arc(px,py,GRID*1.3,0,Math.PI*2); ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+
+  // Draw hairline contours on top (no blur)
+  const CGRID=12;
+  const {f:cf, cols:cc, rows:cr}=buildField(W,H,CGRID);
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function interp(v0,v1,threshold){
+    if(Math.abs(v1-v0)<0.0001)return 0.5;
+    return (threshold-v0)/(v1-v0);
+  }
+  for(let ti=0;ti<PALETTE.length;ti++){
+    const p=PALETTE[ti]; const t=p.t;
+    ctx.strokeStyle=`rgba(${p.r},${p.g},${p.b},${0.35+ti*0.1})`;
+    ctx.lineWidth=0.7; ctx.lineJoin='round'; ctx.lineCap='round';
+    for(let r=0;r<cr-1;r++){
+      for(let c=0;c<cc-1;c++){
+        const v00=cf[r*cc+c],v10=cf[r*cc+c+1],v01=cf[(r+1)*cc+c],v11=cf[(r+1)*cc+c+1];
+        const x0=c*CGRID, y0=r*CGRID;
+        const b00=v00>=t?1:0,b10=v10>=t?1:0,b01=v01>=t?1:0,b11=v11>=t?1:0;
+        const idx=b00|b10<<1|b11<<2|b01<<3;
+        if(idx===0||idx===15) continue;
+        const top=[x0+lerp(0,CGRID,interp(v00,v10,t)),y0];
+        const right=[x0+CGRID,y0+lerp(0,CGRID,interp(v10,v11,t))];
+        const bottom=[x0+lerp(0,CGRID,interp(v01,v11,t)),y0+CGRID];
+        const left=[x0,y0+lerp(0,CGRID,interp(v00,v01,t))];
+        const segs={1:[left,top],2:[top,right],3:[left,right],4:[right,bottom],6:[top,bottom],7:[left,bottom],8:[bottom,left],9:[bottom,top],11:[bottom,right],12:[right,left],13:[right,top],14:[left,top]};
+        const seg=segs[idx]; if(!seg) continue;
+        ctx.beginPath(); ctx.moveTo(seg[0][0],seg[0][1]); ctx.lineTo(seg[1][0],seg[1][1]); ctx.stroke();
+      }
+    }
+  }
+  drawNodes(ctx);
+}
+
+// ---- D: Inner radiance (single bloom per node) ----
+function renderD() {
+  const cv=document.getElementById('cv-d'), ctx=cv.getContext('2d');
+  const W=cv.width, H=cv.height;
+  drawBg(ctx,W,H);
+
+  ctx.save();
+  ctx.filter='blur(3px)';
+  // Single large gradient per node, layered
+  for(const n of nodes){
+    const R=170;
+    const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,R);
+    g.addColorStop(0,  'rgba(130,160,115,0.28)');
+    g.addColorStop(0.4,'rgba(155,180,140,0.18)');
+    g.addColorStop(0.7,'rgba(180,200,165,0.10)');
+    g.addColorStop(1,  'rgba(180,200,165,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(n.x,n.y,R,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+  drawNodes(ctx);
+}
+
+renderA(); renderB(); renderC(); renderD();
+
+let selected=null;
+function selectCard(id){
+  if(selected) document.getElementById('card-'+selected).classList.remove('selected');
+  selected=id;
+  document.getElementById('card-'+id).classList.add('selected');
+  const names={a:'A — Soft Blob',b:'B — Topo Contour Lines',c:'C — Filled + Hairline Contours',d:'D — Inner Radiance'};
+  document.getElementById('sel-bar').textContent='Selected: '+names[id]+' — reply in terminal.';
+}
+</script>
+</body>
+</html>

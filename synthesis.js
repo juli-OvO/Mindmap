@@ -131,7 +131,7 @@ function renderSynthPopup() {
   trigTitle.textContent = 'trigger';
   trigSec.appendChild(trigTitle);
 
-  ['what am i circling?', 'give me the concept', 'push back'].forEach(trigger => {
+  ['what am i circling?', 'give me the concept', 'push back', 'concept from labels'].forEach(trigger => {
     const row = document.createElement('div');
     const selected = confirmedState.trigger === trigger;
     row.className = 'sp-trigger-row' + (selected ? ' selected' : '');
@@ -165,6 +165,11 @@ function renderSynthPopup() {
 
 async function confirmSynthesis() {
   closeSynthPopup();
+
+  if (confirmedState.trigger === 'concept from labels') {
+    await callSynthesis(getCurrentNodeLabels());
+    return;
+  }
 
   const output = document.getElementById('synth-output');
   output.style.display = 'block';
@@ -212,6 +217,44 @@ async function confirmSynthesis() {
     output.innerHTML =
       '<button class="so-close" id="so-close-btn">×</button>' +
       '<div class="so-trigger-label">' + confirmedState.trigger + '</div>' +
+      '<div class="so-text so-loading">error: ' + escapeHtml(err.message) + '</div>';
+    document.getElementById('so-close-btn').addEventListener('click', () => {
+      output.style.display = 'none';
+    });
+  }
+}
+
+async function callSynthesis(labels) {
+  const output = document.getElementById('synth-output');
+  output.style.display = 'block';
+  output.innerHTML =
+    '<button class="so-close" id="so-close-btn">×</button>' +
+    '<div class="so-trigger-label">concept from labels</div>' +
+    '<div class="so-text so-loading">synthesizing concept...</div>';
+  document.getElementById('so-close-btn').addEventListener('click', () => {
+    output.style.display = 'none';
+  });
+
+  try {
+    const resp = await fetch('/api/synthesizeConcept', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ labels }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+    output.innerHTML =
+      '<button class="so-close" id="so-close-btn">×</button>' +
+      '<div class="so-trigger-label">concept from labels</div>' +
+      '<div class="so-text">' + escapeHtml(data.concept) + '</div>';
+    document.getElementById('so-close-btn').addEventListener('click', () => {
+      output.style.display = 'none';
+    });
+  } catch (err) {
+    output.innerHTML =
+      '<button class="so-close" id="so-close-btn">×</button>' +
+      '<div class="so-trigger-label">concept from labels</div>' +
       '<div class="so-text so-loading">error: ' + escapeHtml(err.message) + '</div>';
     document.getElementById('so-close-btn').addEventListener('click', () => {
       output.style.display = 'none';

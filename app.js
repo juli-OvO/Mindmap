@@ -1,16 +1,17 @@
 // ═══════════════════════════════════════════════════════════════
 // DOM REFS
 // ═══════════════════════════════════════════════════════════════
-const pCanvas    = document.getElementById('particle-canvas');
-const pCtx       = pCanvas.getContext('2d');
-const cContainer = document.getElementById('canvas-container');
-const cDiv       = document.getElementById('canvas');
-const hint       = document.getElementById('hint');
-const editPanel  = document.getElementById('edit-panel');
-const typePicker = document.getElementById('type-picker');
-const ctxMenu    = document.getElementById('context-menu');
-const typeFilter = document.getElementById('type-filter');
-const tagFilter  = document.getElementById('tag-filter');
+const pCanvas       = document.getElementById('particle-canvas');
+const pCtx          = pCanvas.getContext('2d');
+const cContainer    = document.getElementById('canvas-container');
+const cDiv          = document.getElementById('canvas');
+const hint          = document.getElementById('hint');
+const editPanel     = document.getElementById('edit-panel');
+const typePicker    = document.getElementById('type-picker');
+const ctxMenu       = document.getElementById('context-menu');
+const typeFilter    = document.getElementById('type-filter');
+const tagFilter     = document.getElementById('tag-filter');
+const titleInput    = document.getElementById('project-title-input');
 
 const NODE_TYPES = ['feeling','observation','question','tension','anchor','reference','material','decision'];
 
@@ -31,8 +32,7 @@ function toWorld(sx, sy) {
 }
 
 function nodeRadius(frag) {
-  const base = nodeTextMode === 'visible' ? RADIUS_VISIBLE : RADIUS_SIMPLIFY;
-  return base + (frag.weight || 0) * 6;
+  return RADIUS_SIMPLIFY + (frag.weight || 0) * 6;
 }
 function nodeScreen(frag) {
   const s = toScreen(frag.x, frag.y);
@@ -418,22 +418,10 @@ function deleteFragment(id) {
   if (editFrag && editFrag.id === id) closeEditPanel();
 }
 
-// ═══════════════════════════════════════════════════════════════
-// VIEW MODE TOGGLE
-// ═══════════════════════════════════════════════════════════════
-function setNodeMode(mode) {
-  nodeTextMode = mode;
-  document.body.className = 'mode-' + mode;
-  document.getElementById('vt-simplify').classList.toggle('active', mode === 'simplify');
-  document.getElementById('vt-visible').classList.toggle('active', mode === 'visible');
-  // Resize all nodes since radius changes between modes
-  rebuildAllNodes();
-  buildAllPaths();
-  applyGraphVisualState();
-}
-
-document.getElementById('vt-simplify').addEventListener('click', () => setNodeMode('simplify'));
-document.getElementById('vt-visible').addEventListener('click',  () => setNodeMode('visible'));
+titleInput.addEventListener('input', () => {
+  projectTitle = titleInput.value;
+  saveProjectTitle();
+});
 
 typeFilter?.addEventListener('change', () => {
   graphFilters.type = typeFilter.value;
@@ -669,7 +657,8 @@ function showTypePicker(fromId, toId) {
   const a = nodeScreen(fromFrag), b = nodeScreen(toFrag);
 
   typePicker.innerHTML = '';
-  ['echoes','leads-to','counter'].forEach((type, i) => {
+  // Three canonical relationship types — must match server.js VALID_REL
+  ['leads_to','contradicts','parallel'].forEach((type, i) => {
     if (i > 0) typePicker.appendChild(document.createTextNode(' · '));
     const span = document.createElement('span');
     span.className = 'picker-opt'; span.textContent = type;
@@ -804,8 +793,21 @@ document.addEventListener('mouseup', (e) => {
   }
 
   if (draggingNode) {
-    draggingNode.el.style.opacity = '';
-    saveFragments();
+    if (draggingNode.isSuggestion) {
+      const sug = draggingNode.fragment;
+      draggingNode.el.style.opacity = '';
+      if (draggingNode.convertOnDrop) {
+        convertSuggestionToRealNode(sug, draggingNode.el);
+      } else {
+        // Dropped near a real node → convert to real node (no auto-relationship)
+        const near = fragments.find(f => Math.hypot(f.x - sug.x, f.y - sug.y) < 100);
+        if (near) acceptSuggestion(sug, draggingNode.el);
+        // If not near anything, keep it floating at its new position
+      }
+    } else {
+      draggingNode.el.style.opacity = '';
+      saveFragments();
+    }
     draggingNode = null;
     cContainer.style.cursor = 'default';
     drawConnections();
@@ -842,8 +844,7 @@ document.addEventListener('click', (e) => {
 
   if (editPanel.style.display === 'block' &&
       !editPanel.contains(e.target) &&
-      !e.target.closest('.node') &&
-      !e.target.closest('#view-toggle')) {
+      !e.target.closest('.node')) {
     closeEditPanel();
   }
 });
@@ -861,11 +862,659 @@ document.getElementById('synth-overlay').addEventListener('click', function(e) {
 });
 
 // ═══════════════════════════════════════════════════════════════
+// THINKING STATE LABEL
+// Subtle readout of the current classified state + reason.
+// Positioned top-right; hidden when graph is empty.
+// ═══════════════════════════════════════════════════════════════
+const STATE_LABELS = {
+  scatter:    'Scatter / Exploration',
+  trajectory: 'Trajectory / Development',
+  split:      'Split / Debate',
+  echo:       'Echo / Resonance',
+  return:     'Return / Memory',
+};
+
+function renderThinkingStateLabel(classification) {
+  const el = document.getElementById('thinking-state-label');
+  if (!el) return;
+  const label  = STATE_LABELS[classification.state] || classification.state;
+  const reason = (classification.reasons || [])[0] || '';
+  el.innerHTML =
+    `<span class="tsl-state">thinking state: ${label}</span>` +
+    (reason ? `<span class="tsl-reason">${reason.toLowerCase()}</span>` : '');
+  el.style.opacity = '0';
+  el.style.display = 'block';
+  requestAnimationFrame(() => { el.style.opacity = '1'; });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SUGGESTED NODES
+// Suggested nodes are possibilities from the API, not facts.
+// They float disconnected until the user accepts, ignores,
+// or drags them near an existing node.
+// ═══════════════════════════════════════════════════════════════
+function renderSuggestedNodes(suggestions) {
+  // Clear any existing suggestion elements
+  cDiv.querySelectorAll('.suggestion-node').forEach(el => el.remove());
+  if (!Array.isArray(suggestions) || !suggestions.length) return;
+
+  // Store as global ephemeral state (not persisted)
+  suggestedNodes = suggestions
+    .filter(s => s && s.status !== 'ignored')
+    .map(s => ({ ...s, isSuggestion: true, status: 'floating' }));
+
+  // Position suggestions loosely around the current viewport center
+  const centerW = toWorld(window.innerWidth / 2, window.innerHeight / 2);
+  suggestedNodes.forEach((sug, i) => {
+    const angle  = (i / suggestedNodes.length) * Math.PI * 2 + Math.PI * 0.25;
+    const radius = 220 + i * 40;
+    sug.x = centerW.x + Math.cos(angle) * radius;
+    sug.y = centerW.y + Math.sin(angle) * radius * 0.6;
+    buildSuggestionNode(sug);
+  });
+}
+
+function buildSuggestionNode(sug) {
+  const R  = RADIUS_SIMPLIFY;
+  const el = document.createElement('div');
+  el.className  = 'node suggestion-node';
+  el.dataset.id = sug.id;
+  el.style.left   = (sug.x - R) + 'px';
+  el.style.top    = (sug.y - R) + 'px';
+  el.style.width  = (R * 2) + 'px';
+  el.style.height = (R * 2) + 'px';
+
+  const center  = document.createElement('div');
+  center.className = 'node-center';
+  const titleEl = document.createElement('div');
+  titleEl.className   = 'node-title';
+  titleEl.textContent = sug.label || '';
+  center.appendChild(titleEl);
+  el.appendChild(center);
+
+  // Reason shown on hover
+  if (sug.reason) {
+    const tip = document.createElement('div');
+    tip.className   = 'suggestion-reason';
+    tip.textContent = sug.reason;
+    el.appendChild(tip);
+  }
+
+  // Accept: convert to real node
+  const acceptBtn = document.createElement('div');
+  acceptBtn.className   = 'sug-accept-btn';
+  acceptBtn.textContent = '+';
+  acceptBtn.title       = 'accept';
+  acceptBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    acceptSuggestion(sug, el);
+  });
+  el.appendChild(acceptBtn);
+
+  // Ignore: fade out and remove
+  const ignoreBtn = document.createElement('div');
+  ignoreBtn.className   = 'sug-ignore-btn';
+  ignoreBtn.textContent = '×';
+  ignoreBtn.title       = 'ignore';
+  ignoreBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ignoreSuggestion(sug, el);
+  });
+  el.appendChild(ignoreBtn);
+
+  // Drag — shares the existing draggingNode system
+  el.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.sug-accept-btn') || e.target.closest('.sug-ignore-btn')) return;
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    draggingNode = {
+      fragment: sug, el,
+      startMX: e.clientX, startMY: e.clientY,
+      startFX: sug.x,   startFY: sug.y,
+      isSuggestion: true,
+    };
+    el.style.opacity = '0.8';
+    cContainer.style.cursor = 'grabbing';
+  });
+
+  cDiv.appendChild(el);
+}
+
+function acceptSuggestion(sug, el) {
+  const frag = {
+    id:          generateId(),
+    timestamp:   new Date().toISOString(),
+    title:       sug.label  || '',
+    content:     sug.reason || '',
+    type:        'observation',
+    source:      'intuition',
+    tags:        [],
+    connections: [],
+    weight:      0,
+    x:           sug.x,
+    y:           sug.y,
+    sessionId:   currentSessionId,
+    origin:      'extracted',
+  };
+  fragments.push(frag);
+  const cur = sessions.find(s => s.id === currentSessionId);
+  if (cur) { cur.fragmentIds.push(frag.id); saveSessions(); }
+  saveFragments();
+
+  el.remove();
+  suggestedNodes = suggestedNodes.filter(s => s.id !== sug.id);
+  buildNode(frag);
+  refreshFilterOptions();
+  updateHint();
+  buildAllPaths();
+}
+
+function ignoreSuggestion(sug, el) {
+  el.style.transition = 'opacity 0.4s ease';
+  el.style.opacity    = '0';
+  setTimeout(() => {
+    el.remove();
+    suggestedNodes = suggestedNodes.filter(s => s.id !== sug.id);
+  }, 420);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// IMPORT
+// ═══════════════════════════════════════════════════════════════
+function importProject(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    let data;
+    try {
+      data = JSON.parse(e.target.result);
+    } catch {
+      console.warn('[import] invalid JSON — file not loaded');
+      return;
+    }
+    if (!Array.isArray(data.sessions) || !Array.isArray(data.fragments)) {
+      console.warn('[import] missing sessions[] or fragments[] — file not loaded');
+      return;
+    }
+    closeEditPanel();
+    hideContextMenu();
+    cDiv.querySelectorAll('.node').forEach(n => n.remove());
+    const svg = document.getElementById('conn-svg');
+    Array.from(svg.children).forEach(c => { if (c.tagName.toLowerCase() !== 'defs') c.remove(); });
+    applyImportedState(data);
+    titleInput.value = projectTitle;
+    if (fragments.some(f => f.x == null)) {
+      layoutFragments(fragments).forEach(({ id, x, y }) => {
+        const f = fragments.find(fr => fr.id === id);
+        if (f) { f.x = x; f.y = y; }
+      });
+    }
+    applyTransform();
+    fragments.forEach(f => buildNode(f));
+    refreshFilterOptions();
+    updateHint();
+    buildAllPaths();
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById('clear-btn').addEventListener('click', () => {
+  if (!confirm('Clear all nodes? This cannot be undone.')) return;
+  closeEditPanel();
+  hideContextMenu();
+  cDiv.querySelectorAll('.node').forEach(n => n.remove());
+  suggestedNodes    = [];
+  directionSuggestions = [];
+  clearSuggestedRelationshipLines();
+  const critPanel = document.getElementById('critique-panel');
+  if (critPanel) { critPanel.innerHTML = ''; critPanel.style.display = 'none'; }
+  const svg = document.getElementById('conn-svg');
+  Array.from(svg.children).forEach(c => { if (c.tagName.toLowerCase() !== 'defs') c.remove(); });
+  clearProject();
+  refreshFilterOptions();
+  updateHint();
+});
+
+document.getElementById('export-btn').addEventListener('click', exportProject);
+document.getElementById('import-btn').addEventListener('click', () => {
+  document.getElementById('import-file').click();
+});
+document.getElementById('import-file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) { importProject(file); e.target.value = ''; }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// SUGGEST DIRECTIONS
+// Entirely separate from the patch suggestion flow.
+// Patch suggestions use renderSuggestedNodes/buildSuggestionNode
+// (called from input.js and stored in the global suggestedNodes[]).
+// Direction suggestions are tracked in directionSuggestions[] and
+// never touch the patch system's state or the fragments[] array
+// until the user explicitly accepts one.
+// ═══════════════════════════════════════════════════════════════
+
+// Local tracking array — direction suggestions only.
+// Cleared on each new callSuggest run.
+let directionSuggestions = [];
+
+// Lookup a real fragment by id (used by mouseup drag handler).
+function getNodeById(id) {
+  return fragments.find(f => f.id === id) || null;
+}
+
+// Lookup a real fragment by its visible title (case-insensitive).
+// Used to resolve relationship endpoints from labels.
+function findFragmentByLabel(label) {
+  if (!label) return null;
+  const lc = label.toLowerCase().trim();
+  return fragments.find(f => (f.title || '').toLowerCase().trim() === lc) || null;
+}
+
+// ── Parsing ────────────────────────────────────────────────────
+// Accepts the already-fetched data object from callSuggest.
+// Handles the edge case where the model wrapped its JSON in prose
+// by extracting the first balanced { } block.
+// Defaults any missing array field to [] rather than crashing.
+function parseSuggestionsResponse(raw) {
+  console.log('[Suggestions] Raw API response:', raw);
+
+  let obj = raw;
+
+  // If the payload somehow arrives as a string, try to parse it
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj);
+    } catch (_) {
+      // Model may have wrapped JSON in prose — grab first { } block
+      const match = obj.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { obj = JSON.parse(match[0]); }
+        catch (e) {
+          console.warn('[Suggestions] Could not extract JSON from string:', e.message);
+          return null;
+        }
+      } else {
+        console.warn('[Suggestions] Response is not parseable JSON and has no { } block');
+        return null;
+      }
+    }
+  }
+
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    console.warn('[Suggestions] Parsed value is not a plain object:', obj);
+    return null;
+  }
+
+  if (!Array.isArray(obj.suggestedNodes)) {
+    console.warn('[Suggestions] suggestedNodes missing or not an array — defaulting to []');
+  }
+  if (!Array.isArray(obj.suggestedRelationships)) {
+    console.warn('[Suggestions] suggestedRelationships missing or not an array — defaulting to []');
+  }
+
+  const result = {
+    suggestedNodes:         Array.isArray(obj.suggestedNodes)         ? obj.suggestedNodes         : [],
+    suggestedRelationships: Array.isArray(obj.suggestedRelationships) ? obj.suggestedRelationships : [],
+    critique:               Array.isArray(obj.critique)               ? obj.critique               : [],
+  };
+
+  console.log('[Suggestions] Parsed response:', result);
+  return result;
+}
+
+// ── Normalization ──────────────────────────────────────────────
+// Map API-specific suggestion types to types the app understands,
+// and build full local node objects with all required fields.
+const SUGGEST_TYPE_MAP = {
+  missing_question: 'question',
+  bridge:           'observation',
+  tension:          'tension',
+  anchor:           'anchor',
+  clarify:          'observation',
+};
+
+function normalizeSuggestedNodes(rawNodes) {
+  const now = Date.now();
+  return rawNodes
+    .filter(n => n && typeof n.label === 'string' && n.label.trim())
+    .map((n, i) => ({
+      id:           'suggestion-' + now + '-' + i,
+      label:        n.label.trim(),
+      type:         SUGGEST_TYPE_MAP[n.type] || n.type || 'observation',
+      reason:       n.reason || '',
+      isSuggestion: true,
+      accepted:     false,
+      x:            0,
+      y:            0,
+      createdAt:    new Date(now).toISOString(),
+      source:       'api-suggestion',
+    }));
+}
+
+// ── Spatial placement ──────────────────────────────────────────
+// For each suggestion, scan suggestedRelationships to find real
+// fragment anchors, then place accordingly:
+//   2+ anchors → midpoint between first two
+//   1 anchor   → 130px arc from it
+//   0 anchors  → spread around viewport center
+function placeNodes(nodes, relationships) {
+  const center = toWorld(window.innerWidth / 2, window.innerHeight / 2);
+
+  nodes.forEach((node, i) => {
+    const angleOffset = (i / Math.max(nodes.length, 1)) * Math.PI * 2;
+    const myLc = node.label.toLowerCase().trim();
+
+    // Collect unique real-fragment anchors mentioned in any relationship touching this node
+    const anchors = [];
+    relationships.forEach(r => {
+      const fromLc = (r.from || '').toLowerCase().trim();
+      const toLc   = (r.to   || '').toLowerCase().trim();
+      const otherLabel = fromLc === myLc ? r.to : (toLc === myLc ? r.from : null);
+      if (!otherLabel) return;
+      const frag = findFragmentByLabel(otherLabel);
+      if (frag && !anchors.find(a => a.id === frag.id)) anchors.push(frag);
+    });
+
+    if (anchors.length >= 2) {
+      // Place between the two anchors with a small offset to avoid overlap
+      node.x = (anchors[0].x + anchors[1].x) / 2 + Math.cos(angleOffset) * 30;
+      node.y = (anchors[0].y + anchors[1].y) / 2 + Math.sin(angleOffset) * 30;
+    } else if (anchors.length === 1) {
+      const arc = angleOffset + Math.PI * 0.5;
+      node.x = anchors[0].x + Math.cos(arc) * 130;
+      node.y = anchors[0].y + Math.sin(arc) * 130;
+    } else {
+      // No anchor found — spread around viewport center
+      const angle = angleOffset + Math.PI * 0.25;
+      node.x = center.x + Math.cos(angle) * (150 + i * 40);
+      node.y = center.y + Math.sin(angle) * (100 + i * 30);
+    }
+  });
+}
+
+// ── Temporary relationship lines ───────────────────────────────
+// Draws dashed SVG lines between resolved endpoints.
+// Tagged "suggestion-conn" so clearSuggestedRelationshipLines()
+// can remove them without touching real connection paths.
+const REL_COLORS = {
+  leads_to:    'rgba(80,120,100,0.45)',
+  contradicts: 'rgba(160,80,80,0.45)',
+  parallel:    'rgba(139,115,85,0.45)',
+};
+
+function renderSuggestedRelationships(relationships, nodeMap) {
+  const svg = document.getElementById('conn-svg');
+  relationships.forEach(rel => {
+    const fromKey  = (rel.from || '').toLowerCase().trim();
+    const toKey    = (rel.to   || '').toLowerCase().trim();
+    const fromNode = nodeMap[fromKey];
+    const toNode   = nodeMap[toKey];
+
+    if (!fromNode || !toNode) {
+      console.warn('[Suggestions] Skipped relationship — endpoint not found:', rel.from, '→', rel.to);
+      return;
+    }
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('class', 'suggestion-conn');
+    line.setAttribute('x1', fromNode.x);
+    line.setAttribute('y1', fromNode.y);
+    line.setAttribute('x2', toNode.x);
+    line.setAttribute('y2', toNode.y);
+    line.setAttribute('stroke', REL_COLORS[rel.relationship] || 'rgba(100,140,200,0.4)');
+    line.setAttribute('stroke-width', '1');
+    line.setAttribute('stroke-dasharray', '4 3');
+    svg.appendChild(line);
+  });
+}
+
+function clearSuggestedRelationshipLines() {
+  document.querySelectorAll('.suggestion-conn').forEach(el => el.remove());
+}
+
+// ── Critique panel ─────────────────────────────────────────────
+// Shows critique items in a compact side panel.
+// Items are never auto-converted to nodes.
+function renderCritique(critique) {
+  const panel = document.getElementById('critique-panel');
+  if (!panel) return;
+
+  panel.innerHTML = '';
+  if (!critique.length) { panel.style.display = 'none'; return; }
+
+  critique.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'critique-item';
+    row.innerHTML =
+      `<span class="crit-issue">${item.issue || ''}</span>` +
+      `<span class="crit-note">${item.note || ''}</span>` +
+      `<span class="crit-action">→ ${item.nextAction || ''}</span>`;
+    panel.appendChild(row);
+  });
+
+  panel.style.display = 'block';
+}
+
+// ── Node DOM rendering ─────────────────────────────────────────
+// Builds a direction-suggestion node element.
+// data-src="direction" lets us target only these on the next clear,
+// leaving patch suggestion nodes (data-src absent) untouched.
+function renderDirectionSuggestionNode(s) {
+  const R  = RADIUS_SIMPLIFY;
+  const el = document.createElement('div');
+  el.className    = 'node suggestion-node';
+  el.dataset.id   = s.id;
+  el.dataset.src  = 'direction';
+  el.style.left   = (s.x - R) + 'px';
+  el.style.top    = (s.y - R) + 'px';
+  el.style.width  = (R * 2) + 'px';
+  el.style.height = (R * 2) + 'px';
+
+  const centerEl = document.createElement('div');
+  centerEl.className = 'node-center';
+  const titleEl = document.createElement('div');
+  titleEl.className   = 'node-title';
+  titleEl.textContent = s.label;
+  centerEl.appendChild(titleEl);
+  el.appendChild(centerEl);
+
+  // Accept (✓) — left, promotes to a real persistent fragment
+  const acceptBtn = document.createElement('div');
+  acceptBtn.className   = 'sug-dir-accept';
+  acceptBtn.textContent = '✓';
+  acceptBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    convertSuggestionToRealNode(s, el);
+  });
+  el.appendChild(acceptBtn);
+
+  // Decline (✕) — right, fades out and removes
+  const declineBtn = document.createElement('div');
+  declineBtn.className   = 'sug-dir-decline';
+  declineBtn.textContent = '✕';
+  declineBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    el.style.transition = 'opacity 0.3s ease';
+    el.style.opacity    = '0';
+    setTimeout(() => {
+      el.remove();
+      directionSuggestions = directionSuggestions.filter(d => d.id !== s.id);
+      clearSuggestedRelationshipLines();
+    }, 320);
+  });
+  el.appendChild(declineBtn);
+
+  // Reason popup — click node body to toggle; auto-closes others
+  if (s.reason) {
+    const reasonEl = document.createElement('div');
+    reasonEl.className     = 'sug-dir-reasoning';
+    reasonEl.textContent   = s.reason;
+    reasonEl.style.display = 'none';
+    el.appendChild(reasonEl);
+
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = reasonEl.style.display !== 'none';
+      cDiv.querySelectorAll('.sug-dir-reasoning').forEach(r => { r.style.display = 'none'; });
+      if (!isOpen) reasonEl.style.display = 'block';
+    });
+  }
+
+  // Drag — plugs into existing draggingNode system; drop always converts
+  el.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.sug-dir-accept') || e.target.closest('.sug-dir-decline')) return;
+    e.stopPropagation();
+    e.preventDefault();
+    draggingNode = {
+      fragment: s, el,
+      startMX: e.clientX, startMY: e.clientY,
+      startFX: s.x,       startFY: s.y,
+      isSuggestion:  true,
+      convertOnDrop: true,
+    };
+    el.style.opacity = '0.8';
+    cContainer.style.cursor = 'grabbing';
+  });
+
+  cDiv.appendChild(el);
+}
+
+// ── Accept: promote suggestion into a real persistent fragment ─
+// Called by the ✓ button and the mouseup drag-drop handler.
+// After promotion, removes the suggestion element and redraws paths.
+function convertSuggestionToRealNode(sug, el) {
+  const frag = {
+    id:          generateId(),
+    timestamp:   new Date().toISOString(),
+    title:       sug.label || '',
+    content:     sug.reason || '',
+    type:        sug.type || 'observation',
+    source:      'intuition',
+    tags:        [],
+    connections: [],
+    weight:      0,
+    x:           sug.x,
+    y:           sug.y,
+    sessionId:   currentSessionId,
+    origin:      'suggested',
+  };
+  fragments.push(frag);
+  const cur = sessions.find(s => s.id === currentSessionId);
+  if (cur) { cur.fragmentIds.push(frag.id); saveSessions(); }
+  saveFragments();
+
+  el.remove();
+  directionSuggestions = directionSuggestions.filter(d => d.id !== sug.id);
+  clearSuggestedRelationshipLines();
+  buildNode(frag);
+  refreshFilterOptions();
+  updateHint();
+  buildAllPaths();
+}
+
+// ── Main entry point (called by callSuggest after fetch) ───────
+function handleSuggestionsResponse(rawData) {
+  // Step 1 — parse and validate
+  const parsed = parseSuggestionsResponse(rawData);
+  if (!parsed) {
+    console.warn('[Suggestions] Parsing failed — aborting render');
+    return;
+  }
+
+  const { suggestedNodes, suggestedRelationships, critique } = parsed;
+
+  // Step 2 — clear stale direction suggestions from a previous call
+  //           (does NOT touch patch suggestions, which lack data-src="direction")
+  cDiv.querySelectorAll('.node.suggestion-node[data-src="direction"]').forEach(el => el.remove());
+  clearSuggestedRelationshipLines();
+  directionSuggestions = [];
+
+  if (!suggestedNodes.length) {
+    console.warn('[Suggestions] No suggestedNodes to render');
+    renderCritique(critique);
+    return;
+  }
+
+  // Step 3 — normalize raw nodes into full local objects
+  const normalized = normalizeSuggestedNodes(suggestedNodes);
+  console.log('[Suggestions] Normalized nodes:', normalized);
+
+  // Step 4 — place each node spatially using relationship anchors
+  placeNodes(normalized, suggestedRelationships);
+
+  // Step 5 — render node elements and record in tracking array
+  normalized.forEach(s => {
+    renderDirectionSuggestionNode(s);
+    directionSuggestions.push(s);
+  });
+
+  // Step 6 — draw dashed relationship lines
+  //   Build a unified label→coords map from real fragments + new suggestions
+  const nodeMap = {};
+  fragments.forEach(f => { if (f.title) nodeMap[f.title.toLowerCase().trim()] = f; });
+  normalized.forEach(s => { nodeMap[s.label.toLowerCase().trim()] = s; });
+  renderSuggestedRelationships(suggestedRelationships, nodeMap);
+
+  // Step 7 — render critique panel (separate from the graph)
+  renderCritique(critique);
+}
+
+// ── API call ───────────────────────────────────────────────────
+async function callSuggest(nodes) {
+  const btn = document.getElementById('suggest-btn');
+  if (btn) { btn.textContent = 'requesting...'; btn.disabled = true; }
+
+  const reset = (label) => {
+    if (!btn) return;
+    btn.textContent = label;
+    setTimeout(() => { btn.textContent = 'suggest directions'; btn.disabled = false; }, 2500);
+  };
+
+  try {
+    const resp = await fetch('/api/suggestDirections', {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify({ nodes }),
+    });
+    const text = await resp.text();
+    console.log('[Suggestions] Raw API response (first 400 chars):', text.slice(0, 400));
+
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error(`HTTP ${resp.status} — response is not JSON`); }
+
+    if (!resp.ok || data.error) throw new Error(data.error || `HTTP ${resp.status}`);
+
+    handleSuggestionsResponse(data);
+    const n = Array.isArray(data.suggestedNodes) ? data.suggestedNodes.length : 0;
+    reset(n + ' suggestion' + (n !== 1 ? 's' : '') + ' added');
+  } catch (err) {
+    console.error('[Suggestions] Fetch error:', err.message);
+    reset('error: ' + err.message.slice(0, 40));
+  }
+}
+
+document.getElementById('suggest-btn')?.addEventListener('click', () => {
+  const nodes = getCurrentNodesForAPI();
+  if (!nodes.length) return;
+  callSuggest(nodes);
+});
+
+// ═══════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════
 function init() {
   resizeParticleCanvas();
   loadState();
+  titleInput.value = projectTitle;
+  if (fragments.some(f => f.x == null)) {
+    layoutFragments(fragments).forEach(({ id, x, y }) => {
+      const f = fragments.find(fr => fr.id === id);
+      if (f) { f.x = x; f.y = y; }
+    });
+  }
   applyTransform();
   fragments.forEach(f => buildNode(f));
   refreshFilterOptions();

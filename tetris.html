@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Tetris</title>
+</head>
+<body>
+  <script>
+    /***********************
+ * SECTION 1: CONSTANTS
+ ***********************/
+
+// Board size
+const COLS = 10;
+const ROWS = 20;
+const CELL_SIZE = 30;
+
+// Timing
+const GRAVITY_INTERVAL = 1000; // 1 row per second
+
+// Piece IDs
+const PIECE_IDS = {
+  I: 1,
+  O: 2,
+  T: 3,
+  S: 4,
+  Z: 5,
+  J: 6,
+  L: 7
+};
+
+// Piece type list for random spawning / enter cycling
+const PIECE_TYPES = ["I", "O", "T", "S", "Z", "J", "L"];
+
+
+/*********************************
+ * SECTION 2: SHAPE ROTATION DATA
+ *********************************
+ * Each piece stores 4 rotation states.
+ * Each state is an array of [x, y] local cell coordinates.
+ */
+
+const SHAPES = {
+  I: [
+    [[0,1],[1,1],[2,1],[3,1]],
+    [[2,0],[2,1],[2,2],[2,3]],
+    [[0,2],[1,2],[2,2],[3,2]],
+    [[1,0],[1,1],[1,2],[1,3]]
+  ],
+
+  O: [
+    [[1,0],[2,0],[1,1],[2,1]],
+    [[1,0],[2,0],[1,1],[2,1]],
+    [[1,0],[2,0],[1,1],[2,1]],
+    [[1,0],[2,0],[1,1],[2,1]]
+  ],
+
+  T: [
+    [[1,0],[0,1],[1,1],[2,1]],
+    [[1,0],[1,1],[2,1],[1,2]],
+    [[0,1],[1,1],[2,1],[1,2]],
+    [[1,0],[0,1],[1,1],[1,2]]
+  ],
+
+  S: [
+    [[1,0],[2,0],[0,1],[1,1]],
+    [[1,0],[1,1],[2,1],[2,2]],
+    [[1,1],[2,1],[0,2],[1,2]],
+    [[0,0],[0,1],[1,1],[1,2]]
+  ],
+
+  Z: [
+    [[0,0],[1,0],[1,1],[2,1]],
+    [[2,0],[1,1],[2,1],[1,2]],
+    [[0,1],[1,1],[1,2],[2,2]],
+    [[1,0],[0,1],[1,1],[0,2]]
+  ],
+
+  J: [
+    [[0,0],[0,1],[1,1],[2,1]],
+    [[1,0],[2,0],[1,1],[1,2]],
+    [[0,1],[1,1],[2,1],[2,2]],
+    [[1,0],[1,1],[0,2],[1,2]]
+  ],
+
+  L: [
+    [[2,0],[0,1],[1,1],[2,1]],
+    [[1,0],[1,1],[1,2],[2,2]],
+    [[0,1],[1,1],[2,1],[0,2]],
+    [[0,0],[1,0],[1,1],[1,2]]
+  ]
+};
+
+
+/*******************************
+ * SECTION 3: COLOR DEFINITIONS
+ *******************************/
+
+const COLORS = {
+  0: "#111",
+  1: "#00d9ff", // I
+  2: "#ffd500", // O
+  3: "#b84dff", // T
+  4: "#4dff88", // S
+  5: "#ff4d6d", // Z
+  6: "#4d79ff", // J
+  7: "#ff9f43"  // L
+};
+
+
+/****************************
+ * SECTION 4: PIECE CLASS
+ ****************************/
+
+class Piece {
+  constructor(type) {
+    this.type = type;
+    this.id = PIECE_IDS[type];
+    this.rotation = 0;
+
+    // Spawn near top middle
+    this.x = 3;
+    this.y = 0;
+  }
+
+  // Get local cell coordinates for current rotation
+  getLocalCells(rotation = this.rotation) {
+    return SHAPES[this.type][rotation];
+  }
+
+  // Get board/world cell coordinates
+  getWorldCells(x = this.x, y = this.y, rotation = this.rotation) {
+    return this.getLocalCells(rotation).map(([cx, cy]) => [cx + x, cy + y]);
+  }
+}
+
+
+/****************************
+ * SECTION 5: WORLD CLASS
+ ****************************/
+
+class World {
+  constructor() {
+    this.board = this.createEmptyBoard();
+    this.score = 0;
+    this.gameOver = false;
+
+    this.currentPiece = null;
+
+    // Optional override for the NEXT piece
+    this.nextOverrideIndex = 0;
+    this.nextOverrideType = null;
+
+    this.lastFallTime = 0;
+  }
+
+  /********************************
+   * SECTION 5A: BOARD CREATION
+   ********************************/
+  createEmptyBoard() {
+    const board = [];
+    for (let r = 0; r < ROWS; r++) {
+      const row = [];
+      for (let c = 0; c < COLS; c++) {
+        row.push(0);
+      }
+      board.push(row);
+    }
+    return board;
+  }
+
+  /********************************
+   * SECTION 5B: RANDOM / NEXT PIECE
+   ********************************/
+  getRandomType() {
+    const index = Math.floor(Math.random() * PIECE_TYPES.length);
+    return PIECE_TYPES[index];
+  }
+
+  getNextType() {
+    if (this.nextOverrideType) {
+      const chosen = this.nextOverrideType;
+      this.nextOverrideType = null; // use once
+      return chosen;
+    }
+    return this.getRandomType();
+  }
+
+  cycleNextOverride() {
+    this.nextOverrideIndex = (this.nextOverrideIndex + 1) % PIECE_TYPES.length;
+    this.nextOverrideType = PIECE_TYPES[this.nextOverrideIndex];
+  }
+
+  /********************************
+   * SECTION 5C: SPAWN
+   ********************************/
+  spawnPiece() {
+    const type = this.getNextType();
+    const piece = new Piece(type);
+
+    // If spawn position is already blocked, game over
+    if (!this.canPlace(piece, piece.x, piece.y, piece.rotation)) {
+      this.gameOver = true;
+      return;
+    }
+
+    this.currentPiece = piece;
+  }
+
+  /********************************
+   * SECTION 5D: COLLISION CHECKS
+   ********************************/
+  isInsideBoard(x, y) {
+    return x >= 0 && x < COLS && y >= 0 && y < ROWS;
+  }
+
+  canPlace(piece, newX, newY, newRotation) {
+    const cells = piece.getWorldCells(newX, newY, newRotation);
+
+    for (const [x, y] of cells) {
+      // Must be inside board
+      if (!this.isInsideBoard(x, y)) {
+        return false;
+      }
+
+      // Must not overlap settled block
+      if (this.board[y][x] !== 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /********************************
+   * SECTION 5E: MOVEMENT
+   ********************************/
+  moveCurrent(dx, dy) {
+    if (!this.currentPiece || this.gameOver) return false;
+
+    const newX = this.currentPiece.x + dx;
+    const newY = this.currentPiece.y + dy;
+
+    if (this.canPlace(this.currentPiece, newX, newY, this.currentPiece.rotation)) {
+      this.currentPiece.x = newX;
+      this.currentPiece.y = newY;
+      return true;
+    }
+
+    return false;
+  }
+
+  /********************************
+   * SECTION 5F: ROTATION + SIMPLE WALL KICK
+   ********************************/
+  rotateCurrent(dir) {
+    if (!this.currentPiece || this.gameOver) return;
+
+    const oldRotation = this.currentPiece.rotation;
+    let newRotation = oldRotation + dir;
+
+    if (newRotation < 0) newRotation = 3;
+    if (newRotation > 3) newRotation = 0;
+
+    // Try simple kick offsets
+    const kickOffsets = [0, -1, 1, -2, 2];
+
+    for (const offsetX of kickOffsets) {
+      const testX = this.currentPiece.x + offsetX;
+      const testY = this.currentPiece.y;
+
+      if (this.canPlace(this.currentPiece, testX, testY, newRotation)) {
+        this.currentPiece.x = testX;
+        this.currentPiece.rotation = newRotation;
+        return;
+      }
+    }
+
+    // If none work, rotation fails and does nothing
+  }
+
+  /********************************
+   * SECTION 5G: LOCK PIECE INTO BOARD
+   ********************************/
+  lockCurrentPiece() {
+    if (!this.currentPiece) return;
+
+    const cells = this.currentPiece.getWorldCells();
+
+    for (const [x, y] of cells) {
+      if (this.isInsideBoard(x, y)) {
+        this.board[y][x] = this.currentPiece.id;
+      }
+    }
+
+    this.currentPiece = null;
+  }
+
+  /********************************
+   * SECTION 5H: CLEAR FULL ROWS
+   ********************************/
+  clearLines() {
+    let linesCleared = 0;
+
+    for (let r = ROWS - 1; r >= 0; r--) {
+      let full = true;
+
+      for (let c = 0; c < COLS; c++) {
+        if (this.board[r][c] === 0) {
+          full = false;
+          break;
+        }
+      }
+
+      if (full) {
+        this.board.splice(r, 1); // remove full row
+        this.board.unshift(new Array(COLS).fill(0)); // add empty row at top
+        linesCleared++;
+        r++; // re-check same row index after shifting
+      }
+    }
+
+    this.addScore(linesCleared);
+  }
+
+  /********************************
+   * SECTION 5I: SCORING
+   ********************************/
+  addScore(linesCleared) {
+    if (linesCleared === 1) this.score += 10;
+    else if (linesCleared === 2) this.score += 20;
+    else if (linesCleared === 3) this.score += 30;
+    else if (linesCleared === 4) this.score += 40;
+  }
+
+  /********************************
+   * SECTION 5J: PIECE LOCK FLOW
+   ********************************/
+  handlePieceLanding() {
+    this.lockCurrentPiece();
+    this.clearLines();
+    this.spawnPiece();
+  }
+
+  /********************************
+   * SECTION 5K: HARD DROP
+   ********************************/
+  hardDrop() {
+    if (!this.currentPiece || this.gameOver) return;
+
+    while (this.moveCurrent(0, 1)) {
+      // keep falling until blocked
+    }
+
+    this.handlePieceLanding();
+  }
+
+  /********************************
+   * SECTION 5L: GRAVITY UPDATE
+   ********************************/
+  update(currentTime) {
+    if (this.gameOver) return;
+    if (!this.currentPiece) return;
+
+    if (currentTime - this.lastFallTime >= GRAVITY_INTERVAL) {
+      this.lastFallTime = currentTime;
+
+      const moved = this.moveCurrent(0, 1);
+
+      if (!moved) {
+        this.handlePieceLanding();
+      }
+    }
+  }
+
+  /********************************
+   * SECTION 5M: RESTART
+   ********************************/
+  restart() {
+    this.board = this.createEmptyBoard();
+    this.score = 0;
+    this.gameOver = false;
+    this.currentPiece = null;
+    this.nextOverrideType = null;
+    this.nextOverrideIndex = 0;
+    this.lastFallTime = 0;
+    this.spawnPiece();
+  }
+
+  /********************************
+   * SECTION 5N: DRAW BOARD
+   ********************************/
+  drawBoard(ctx) {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const value = this.board[r][c];
+
+        ctx.fillStyle = COLORS[value];
+        ctx.fillRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+
+        ctx.strokeStyle = "#222";
+        ctx.strokeRect(c * CELL_SIZE, r * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      }
+    }
+  }
+
+  /********************************
+   * SECTION 5O: DRAW CURRENT PIECE
+   ********************************/
+  drawCurrentPiece(ctx) {
+    if (!this.currentPiece) return;
+
+    const cells = this.currentPiece.getWorldCells();
+
+    ctx.fillStyle = COLORS[this.currentPiece.id];
+
+    for (const [x, y] of cells) {
+      ctx.fillRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      ctx.strokeStyle = "#222";
+      ctx.strokeRect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    }
+  }
+
+  /********************************
+   * SECTION 5P: DRAW UI
+   ********************************/
+  drawUI(ctx, canvas) {
+    ctx.fillStyle = "white";
+    ctx.font = "20px Arial";
+    ctx.fillText(`Score: ${this.score}`, 10, 25);
+
+    const nextText = this.nextOverrideType ? this.nextOverrideType : "Random";
+    ctx.fillText(`Next override: ${nextText}`, 10, 50);
+
+    if (this.gameOver) {
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "white";
+      ctx.font = "36px Arial";
+      ctx.fillText("GAME OVER", 65, 260);
+
+      ctx.font = "20px Arial";
+      ctx.fillText("Press R to restart", 95, 300);
+    }
+  }
+
+  /********************************
+   * SECTION 5Q: MAIN DRAW
+   ********************************/
+  draw(ctx, canvas) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    this.drawBoard(ctx);
+    this.drawCurrentPiece(ctx);
+    this.drawUI(ctx, canvas);
+  }
+}
+
+
+/****************************
+ * SECTION 6: CANVAS SETUP
+ ****************************/
+
+const canvas = document.createElement("canvas");
+canvas.width = COLS * CELL_SIZE;
+canvas.height = ROWS * CELL_SIZE;
+document.body.appendChild(canvas);
+
+const ctx = canvas.getContext("2d");
+
+// Optional page styling
+document.body.style.background = "#0a0a0a";
+document.body.style.margin = "0";
+document.body.style.display = "flex";
+document.body.style.justifyContent = "center";
+document.body.style.alignItems = "center";
+document.body.style.height = "100vh";
+
+
+/****************************
+ * SECTION 7: GAME CREATION
+ ****************************/
+
+const world = new World();
+world.spawnPiece();
+
+
+/****************************
+ * SECTION 8: INPUT CONTROLS
+ ****************************
+ * Left  = move left
+ * Right = move right
+ * Up    = rotate clockwise
+ * Z     = rotate counterclockwise
+ * Down  = soft drop (1 step)
+ * Space = hard drop
+ * Enter = cycle next spawn piece
+ * R     = restart
+ */
+
+document.addEventListener("keydown", (event) => {
+  if (world.gameOver) {
+    if (event.key === "r" || event.key === "R") {
+      world.restart();
+    }
+    return;
+  }
+
+  switch (event.key) {
+    case "ArrowLeft":
+      world.moveCurrent(-1, 0);
+      break;
+
+    case "ArrowRight":
+      world.moveCurrent(1, 0);
+      break;
+
+    case "ArrowDown":
+      // Soft drop: one extra step down
+      if (!world.moveCurrent(0, 1)) {
+        world.handlePieceLanding();
+      }
+      break;
+
+    case "ArrowUp":
+      world.rotateCurrent(1);
+      break;
+
+    case "z":
+    case "Z":
+      world.rotateCurrent(-1);
+      break;
+
+    case " ":
+      event.preventDefault();
+      world.hardDrop();
+      break;
+
+    case "Enter":
+      world.cycleNextOverride();
+      break;
+
+    case "r":
+    case "R":
+      world.restart();
+      break;
+  }
+});
+
+
+/****************************
+ * SECTION 9: GAME LOOP
+ ****************************/
+
+function gameLoop(timestamp) {
+  world.update(timestamp);
+  world.draw(ctx, canvas);
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>

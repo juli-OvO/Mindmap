@@ -317,6 +317,19 @@ function sampleNodeHalo(node, x, y) {
   return { x: tangential.x * 0.18, y: tangential.y * 0.18, w: falloff * 0.14 };
 }
 
+function applyNodeRepulsion(p, nodes) {
+  for (const node of nodes) {
+    const dx = p.x - node.x;
+    const dy = p.y - node.y;
+    const d = Math.hypot(dx, dy) || 0.001;
+    const outer = node.r * 1.8;
+    if (d > outer) continue;
+    const strength = (1 - smoothstep(node.r * 0.4, outer, d)) * 1.4;
+    p.vx += (dx / d) * strength;
+    p.vy += (dy / d) * strength;
+  }
+}
+
 function sampleCorridor(edge, x, y, params, particle = null, time = 0) {
   const corridorRadius = params.corridorRadius;
   const seg = distToSegmentWithT(x, y, edge.a.x, edge.a.y, edge.b.x, edge.b.y);
@@ -492,6 +505,7 @@ function updateParticles(dt, time, params) {
     const field = sampleField(flowGraph, p.x, p.y, time, params, p);
     p.vx = p.vx * 0.94 + field.x * params.speed;
     p.vy = p.vy * 0.94 + field.y * params.speed;
+    applyNodeRepulsion(p, flowGraph.nodes);
     p.x += p.vx * dt * 60;
     p.y += p.vy * dt * 60;
 
@@ -572,12 +586,12 @@ function renderParticles(ctx, params) {
   }
   ctx.restore();
 
-  if (window.Terrain) window.Terrain.draw(ctx);
-
   const state = typeof canvasState !== "undefined" ? canvasState : { x: 0, y: 0, scale: 1 };
   ctx.save();
   ctx.setTransform(dpr * state.scale, 0, 0, dpr * state.scale, dpr * state.x, dpr * state.y);
   ctx.globalCompositeOperation = params.blendMode || "source-over";
+
+  if (window.Terrain) window.Terrain.draw(ctx);
 
   renderCorridors(ctx, params);
   for (const p of particles) {

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terrain Hierarchy</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #1a1a1a; font-family: 'Georgia', serif; color: #e8e0d0; padding: 28px 32px 48px; }
+  h2 { font-size: 20px; font-weight: normal; letter-spacing: 0.04em; margin-bottom: 6px; color: #f0e8d8; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; font-style: italic; max-width: 740px; line-height: 1.6; }
+  .card {
+    border-radius: 10px; overflow: hidden;
+    border: 2px solid transparent; cursor: pointer;
+    transition: border-color 0.2s; background: #111;
+    margin-bottom: 20px; max-width: 920px;
+  }
+  .card:hover { border-color: #555; }
+  .card.selected { border-color: #a8c890; }
+  .card canvas { display: block; width: 100%; }
+  .card-body { padding: 13px 18px; background: #1e1e1e; display: flex; gap: 20px; align-items: flex-start; }
+  .card-label { font-size: 14px; color: #e0d5c0; white-space: nowrap; min-width: 210px; }
+  .card-body p { font-size: 12px; color: #777; line-height: 1.6; }
+  .legend { display: flex; gap: 18px; margin-top: 8px; flex-wrap: wrap; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #888; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .sel-bar { margin-top: 6px; font-size: 13px; color: #aaa; font-style: italic; }
+</style>
+</head>
+<body>
+<h2>Terrain — Node Height Hierarchy</h2>
+<p class="subtitle">
+  Node weight drives terrain peak height. Heavy nodes (anchor, decision) = tall peaks with many tight rings.
+  Light nodes (reference, suggestion) = shallow imprint on outer band only.
+  Params: r:55, noise:0.68. Node dot size reflects weight.
+</p>
+
+<div class="card" id="card-a" onclick="sel('a')">
+  <canvas id="cv-a" width="900" height="260"></canvas>
+  <div class="card-body">
+    <div>
+      <span class="card-label">A — Subtle weight range (0.3 → 1.2)</span>
+      <p>Gentle hierarchy. Heavy nodes read as clearly taller but lighter nodes still register faintly.</p>
+      <div class="legend">
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.9);width:13px;height:13px"></div> heavy (w≈1.2)</div>
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.7);width:9px;height:9px"></div> medium (w≈0.75)</div>
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.5);width:6px;height:6px"></div> light (w≈0.30)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="card-b" onclick="sel('b')">
+  <canvas id="cv-b" width="900" height="260"></canvas>
+  <div class="card-body">
+    <div>
+      <span class="card-label">B — Strong weight range (0.2 → 1.6)</span>
+      <p>Clear hierarchy. Light nodes barely visible — just a ghost on the outermost band. Heavy nodes peak dramatically.</p>
+      <div class="legend">
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.9);width:14px;height:14px"></div> heavy (w≈1.6)</div>
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.7);width:9px;height:9px"></div> medium (w≈0.8)</div>
+        <div class="legend-item"><div class="dot" style="background:rgba(60,45,25,0.5);width:5px;height:5px"></div> light (w≈0.2)</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="sel-bar" id="sel-bar">Click a variant, then reply in terminal.</div>
+
+<script>
+const BG = '#F3ECDC';
+const R = 55, NS = 0.021, NST = 0.68;
+
+function vn(x, y) {
+  function h(n) { n=(n^(n>>7))*0x45d9f3b; return ((n^(n>>4))&0xff)/255; }
+  const X=Math.floor(x)&255,Y=Math.floor(y)&255;
+  const fx=x-Math.floor(x),fy=y-Math.floor(y);
+  const u=fx*fx*(3-2*fx),v=fy*fy*(3-2*fy);
+  return h(X+Y*57)*(1-u)*(1-v)+h(X+1+Y*57)*u*(1-v)+h(X+(Y+1)*57)*(1-u)*v+h(X+1+(Y+1)*57)*u*v;
+}
+function fbm(x, y) {
+  return vn(x,y)*0.500+vn(x*2.1,y*2.1)*0.250+vn(x*4.3,y*4.3)*0.125+vn(x*8.7,y*8.7)*0.0625;
+}
+
+// Nodes with weights — spread across the full canvas width
+// Three groups: a tight cluster top-left, a loose group center, scattered singles right
+const NODES_A = [
+  // cluster — mixed weights
+  {x:120,y:95,  w:1.20, label:'anchor'},
+  {x:155,y:130, w:0.85, label:'observation'},
+  {x:170,y:92,  w:1.10, label:'decision'},
+  {x:128,y:150, w:0.40, label:'reference'},
+  {x:185,y:148, w:0.30, label:'suggestion'},
+  // loose group
+  {x:370,y:80,  w:0.75, label:'feeling'},
+  {x:420,y:130, w:1.00, label:'tension'},
+  {x:450,y:82,  w:0.35, label:'reference'},
+  {x:390,y:165, w:0.55, label:'observation'},
+  // right scattered
+  {x:620,y:100, w:1.15, label:'anchor'},
+  {x:680,y:155, w:0.30, label:'suggestion'},
+  {x:750,y:90,  w:0.70, label:'question'},
+  {x:800,y:160, w:0.45, label:'material'},
+  {x:840,y:105, w:0.90, label:'tension'},
+];
+
+const NODES_B = NODES_A.map(n => ({
+  ...n,
+  w: n.w >= 1.0 ? n.w * 1.35 : n.w * 0.65
+}));
+
+function density(px, py, nodes) {
+  let d=0;
+  for(const n of nodes){
+    const dx=px-n.x,dy=py-n.y;
+    d+=n.w*Math.exp(-(dx*dx+dy*dy)/(R*R));
+  }
+  const noise=fbm(px*NS,py*NS);
+  return d*((1-NST)+NST*2*noise);
+}
+
+function buildField(W,H,G,nodes){
+  const cols=Math.ceil(W/G)+2,rows=Math.ceil(H/G)+2;
+  const f=new Float32Array(cols*rows);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++) f[r*cols+c]=density(c*G,r*G,nodes);
+  return {f,cols,rows};
+}
+
+function drawFill(ctx,f,cols,rows,G,threshold,r,g,b,a){
+  for(let row=0;row<rows;row++) for(let col=0;col<cols;col++){
+    if(f[row*cols+col]>=threshold){
+      const px=col*G,py=row*G;
+      const grad=ctx.createRadialGradient(px,py,0,px,py,G*1.6);
+      grad.addColorStop(0,`rgba(${r},${g},${b},${a})`);
+      grad.addColorStop(1,`rgba(${r},${g},${b},0)`);
+      ctx.fillStyle=grad;
+      ctx.beginPath();ctx.arc(px,py,G*1.4,0,Math.PI*2);ctx.fill();
+    }
+  }
+}
+
+function marchLines(ctx,f,cols,rows,G,threshold,color,lw){
+  function ei(v0,v1,t){return Math.abs(v1-v0)<1e-4?0.5:Math.max(0,Math.min(1,(t-v0)/(v1-v0)));}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  ctx.strokeStyle=color;ctx.lineWidth=lw;ctx.lineJoin='round';ctx.lineCap='round';
+  ctx.beginPath();
+  for(let r=0;r<rows-1;r++) for(let c=0;c<cols-1;c++){
+    const v00=f[r*cols+c],v10=f[r*cols+c+1],v01=f[(r+1)*cols+c],v11=f[(r+1)*cols+c+1];
+    const x0=c*G,y0=r*G;
+    const b00=v00>=threshold?1:0,b10=v10>=threshold?1:0,b01=v01>=threshold?1:0,b11=v11>=threshold?1:0;
+    const idx=b00|b10<<1|b11<<2|b01<<3;
+    if(idx===0||idx===15) continue;
+    const top=[x0+lerp(0,G,ei(v00,v10,threshold)),y0];
+    const rgt=[x0+G,y0+lerp(0,G,ei(v10,v11,threshold))];
+    const bot=[x0+lerp(0,G,ei(v01,v11,threshold)),y0+G];
+    const lft=[x0,y0+lerp(0,G,ei(v00,v01,threshold))];
+    const map={1:[lft,top],2:[top,rgt],3:[lft,rgt],4:[rgt,bot],6:[top,bot],7:[lft,bot],8:[bot,lft],9:[bot,top],11:[bot,rgt],12:[rgt,lft],13:[rgt,top],14:[lft,top]};
+    const pairs=idx===5?[[lft,top],[rgt,bot]]:idx===10?[[top,rgt],[bot,lft]]:(map[idx]?[map[idx]]:null);
+    if(!pairs) continue;
+    for(const s of pairs){ctx.moveTo(s[0][0],s[0][1]);ctx.lineTo(s[1][0],s[1][1]);}
+  }
+  ctx.stroke();
+}
+
+function drawNodes(ctx, nodes){
+  for(const n of nodes){
+    // node size scales with weight
+    const baseR = 3 + n.w * 3.5;
+    const innerR = 1.5 + n.w * 2;
+    ctx.beginPath();ctx.arc(n.x,n.y,baseR,0,Math.PI*2);
+    ctx.fillStyle=`rgba(60,45,25,${0.45+n.w*0.35})`;ctx.fill();
+    ctx.beginPath();ctx.arc(n.x,n.y,innerR,0,Math.PI*2);
+    ctx.fillStyle=`rgba(218,192,138,${0.70+n.w*0.22})`;ctx.fill();
+  }
+}
+
+const BANDS=[
+  {t:0.05, r:202,g:214,b:188, fa:0.038, lc:'rgba(148,168,126,0.30)', lw:0.5},
+  {t:0.13, r:180,g:200,b:162, fa:0.052, lc:'rgba(126,154,104,0.38)', lw:0.65},
+  {t:0.24, r:156,g:183,b:136, fa:0.066, lc:'rgba(105,142,82,0.46)',  lw:0.80},
+  {t:0.38, r:132,g:161,b:109, fa:0.082, lc:'rgba(84,126,62,0.53)',   lw:0.95},
+  {t:0.55, r:108,g:140,b:84,  fa:0.100, lc:'rgba(64,110,44,0.60)',   lw:1.10},
+  {t:0.75, r:85, g:117,b:62,  fa:0.122, lc:'rgba(46,92,28,0.67)',    lw:1.25},
+  {t:0.98, r:64, g:96, b:42,  fa:0.146, lc:'rgba(30,74,16,0.73)',    lw:1.40},
+];
+
+function render(id, nodes){
+  const cv=document.getElementById('cv-'+id),ctx=cv.getContext('2d');
+  const W=cv.width,H=cv.height,G=7;
+  ctx.fillStyle=BG;ctx.fillRect(0,0,W,H);
+  const {f,cols,rows}=buildField(W,H,G,nodes);
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];drawFill(ctx,f,cols,rows,G,b.t,b.r,b.g,b.b,b.fa);}
+  for(let i=0;i<BANDS.length;i++){const b=BANDS[i];marchLines(ctx,f,cols,rows,G,b.t,b.lc,b.lw);}
+  drawNodes(ctx,nodes);
+}
+
+render('a', NODES_A);
+render('b', NODES_B);
+
+let sel_=null;
+function sel(id){
+  if(sel_) document.getElementById('card-'+sel_).classList.remove('selected');
+  sel_=id;document.getElementById('card-'+id).classList.add('selected');
+  const n={a:'A — Subtle weight range',b:'B — Strong weight range'};
+  document.getElementById('sel-bar').textContent='Selected: '+n[id]+' — reply in terminal.';
+}
+</script>
+</body>
+</html>

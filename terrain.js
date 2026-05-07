@@ -5,12 +5,12 @@
 // ═══════════════════════════════════════════════════════════════
 
 const TERRAIN_ENABLED        = true;
-const TERRAIN_RADIUS         = 55;
+const TERRAIN_RADIUS         = 305;
 const TERRAIN_GRID_SIZE      = 7;
-const TERRAIN_NOISE_SCALE    = 0.021;
+const TERRAIN_NOISE_SCALE    = 0.01;
 const TERRAIN_NOISE_STRENGTH = 0.68;
-const TERRAIN_WEIGHT_MIN     = 0.2;
-const TERRAIN_WEIGHT_MAX     = 1.6;
+const TERRAIN_WEIGHT_MIN     = 0.07;
+const TERRAIN_WEIGHT_MAX     = 0.60;
 
 const _BANDS = [
   { t:0.05, r:202,g:214,b:188, fa:0.038, lc:[148,168,126,0.30], lw:0.50 },
@@ -42,7 +42,7 @@ function _fbm(x, y) {
 }
 
 let _cache = null;       // { f, cols, rows, worldMinX, worldMinY }
-let _offscreen = null;   // HTMLCanvasElement, screen-space pixel dimensions
+let _offscreen = null;   // HTMLCanvasElement, world-space pixel dimensions (no dpr/scale)
 let _offCtx = null;
 let _dirty = true;
 
@@ -50,7 +50,6 @@ let _dirty = true;
 let _lastLen = -1;
 let _lastPosHash = NaN;
 let _lastWtHash  = NaN;
-let _lastTx = Infinity, _lastTy = Infinity, _lastScale = Infinity;
 
 function _remapWeight(w, wMin, wMax) {
   const span = wMax - wMin;
@@ -85,21 +84,13 @@ function _buildField(worldMinX, worldMinY, worldMaxX, worldMaxY, nodes, remapped
 
 function _checkDirty() {
   const frags = typeof fragments !== 'undefined' ? fragments : [];
-  const state = typeof canvasState !== 'undefined' ? canvasState : { x:0, y:0, scale:1 };
-
-  if (!state.scale || !isFinite(state.scale)) return;
   const len = frags.length;
   let posHash = 0, wtHash = 0;
   for (let i = 0; i < frags.length; i++) { posHash += Math.round(frags[i].x) * 31 + Math.round(frags[i].y) * 17 + i * 7; wtHash += frags[i].weight || 1; }
 
-  const txChanged = Math.abs(state.x - _lastTx) > TERRAIN_GRID_SIZE
-                 || Math.abs(state.y - _lastTy) > TERRAIN_GRID_SIZE
-                 || Math.abs(state.scale - _lastScale) > 0.005;
-
-  if (len === _lastLen && posHash === _lastPosHash && wtHash === _lastWtHash && !txChanged && !_dirty) return;
+  if (len === _lastLen && posHash === _lastPosHash && wtHash === _lastWtHash && !_dirty) return;
 
   _lastLen = len; _lastPosHash = posHash; _lastWtHash = wtHash;
-  _lastTx = state.x; _lastTy = state.y; _lastScale = state.scale;
   _dirty = false;
 
   if (len === 0) {
@@ -110,22 +101,23 @@ function _checkDirty() {
 
   console.log('[Terrain] recalculated');
 
-  const dpr = window.devicePixelRatio || 1;
-  const canvas = document.getElementById('particle-canvas');
-  const W = canvas ? canvas.width : window.innerWidth * dpr;
-  const H = canvas ? canvas.height : window.innerHeight * dpr;
+  // Node-centric bounds — terrain covers node cluster, not viewport
+  const pad = TERRAIN_RADIUS * 2;
+  let wxMin = Infinity, wyMin = Infinity, wxMax = -Infinity, wyMax = -Infinity;
+  for (const fr of frags) {
+    if (fr.x - pad < wxMin) wxMin = fr.x - pad;
+    if (fr.y - pad < wyMin) wyMin = fr.y - pad;
+    if (fr.x + pad > wxMax) wxMax = fr.x + pad;
+    if (fr.y + pad > wyMax) wyMax = fr.y + pad;
+  }
 
-  const worldMinX = -state.x / state.scale;
-  const worldMinY = -state.y / state.scale;
-  const worldMaxX = W / (dpr * state.scale) + worldMinX;
-  const worldMaxY = H / (dpr * state.scale) + worldMinY;
-
+  if (typeof updateFragmentWeights === 'function') updateFragmentWeights(frags);
   const rawWeights = frags.map(f => f.weight || 1);
   const wMin = Math.min(...rawWeights), wMax = Math.max(...rawWeights);
   const remappedWeights = rawWeights.map(w => _remapWeight(w, wMin, wMax));
 
-  _cache = _buildField(worldMinX, worldMinY, worldMaxX, worldMaxY, frags, remappedWeights);
-  _rebuildOffscreen(W, H, state, dpr);
+  _cache = _buildField(wxMin, wyMin, wxMax, wyMax, frags, remappedWeights);
+  _rebuildOffscreen();
 }
 
 function _drawFillBand(ctx, f, cols, rows, worldMinX, worldMinY, threshold, r, g, b, a) {
@@ -212,7 +204,11 @@ function _marchLines(ctx, f, cols, rows, worldMinX, worldMinY, threshold, lineCo
   ctx.stroke();
 }
 
-function _rebuildOffscreen(W, H, state, dpr) {
+function _rebuildOffscreen() {
+  const { f, cols, rows, worldMinX, worldMinY } = _cache;
+  const W = Math.ceil((cols - 1) * TERRAIN_GRID_SIZE);
+  const H = Math.ceil((rows - 1) * TERRAIN_GRID_SIZE);
+
   if (!_offscreen || _offscreen.width !== W || _offscreen.height !== H) {
     _offscreen = document.createElement('canvas');
     _offscreen.width  = W;
@@ -222,18 +218,13 @@ function _rebuildOffscreen(W, H, state, dpr) {
 
   _offCtx.clearRect(0, 0, W, H);
 
-  // Apply the same world-space transform particles.js uses
+  // Render in world space: translate so (worldMinX, worldMinY) maps to (0, 0) in offscreen
   _offCtx.save();
-  _offCtx.setTransform(dpr * state.scale, 0, 0, dpr * state.scale, dpr * state.x, dpr * state.y);
+  _offCtx.translate(-worldMinX, -worldMinY);
 
-  const { f, cols, rows, worldMinX, worldMinY } = _cache;
-
-  // Pass 1: ghost fills, outer bands first so inner bands paint over
   for (const b of _BANDS) {
     _drawFillBand(_offCtx, f, cols, rows, worldMinX, worldMinY, b.t, b.r, b.g, b.b, b.fa);
   }
-
-  // Pass 2: contour lines at each threshold
   for (const b of _BANDS) {
     _marchLines(_offCtx, f, cols, rows, worldMinX, worldMinY, b.t, b.lc, b.lw);
   }
@@ -245,10 +236,9 @@ window.Terrain = {
   draw(ctx) {
     if (!TERRAIN_ENABLED) return;
     _checkDirty();
-    if (!_offscreen) return;
+    if (!_offscreen || !_cache) return;
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(_offscreen, 0, 0);
+    ctx.drawImage(_offscreen, _cache.worldMinX, _cache.worldMinY);
     ctx.restore();
   },
   getTerrainDensityAt(x, y) {
